@@ -4,6 +4,7 @@ import com.insolu.rag.entity.EmbeddingConfigEntity;
 import com.insolu.rag.entity.EmbeddingConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,9 +18,11 @@ public class EmbeddingConfigService {
     private static final Logger log = LoggerFactory.getLogger(EmbeddingConfigService.class);
 
     private final EmbeddingConfigRepository repository;
+    private final JdbcTemplate jdbcTemplate;
 
-    public EmbeddingConfigService(EmbeddingConfigRepository repository) {
+    public EmbeddingConfigService(EmbeddingConfigRepository repository, JdbcTemplate jdbcTemplate) {
         this.repository = repository;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     public List<EmbeddingConfigEntity> findAll() {
@@ -70,7 +73,36 @@ public class EmbeddingConfigService {
         EmbeddingConfigEntity entity = repository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("配置不存在: " + id));
         entity.setIsActive(true);
-        return repository.save(entity);
+        EmbeddingConfigEntity saved = repository.save(entity);
+
+        // 切换 Embedding 模型后，用新维度重建向量表（旧数据与新模型不兼容）
+        recreateDocumentChunksTable(saved.getDimension());
+
+        return saved;
+    }
+
+    /**
+     * 重建 document_chunks 向量表。
+     * 切换 Embedding 模型时，向量维度可能不同，旧数据无法复用，需要重建。
+     */
+    private void recreateDocumentChunksTable(int dimension) {
+        log.info("重建 document_chunks 表，新维度: {}", dimension);
+        jdbcTemplate.execute("DROP TABLE IF EXISTS document_chunks");
+        // 表结构与 PgVectorEmbeddingStore.createTable=true 生成的一致
+        jdbcTemplate.execute(String.format("""
+                CREATE TABLE document_chunks (
+                    embedding_id UUID PRIMARY KEY,
+                    embedding VECTOR(%d),
+                    text TEXT,
+                    project_name TEXT,
+                    file_path TEXT,
+                    language TEXT,
+                    type TEXT,
+                    signature TEXT,
+                    start_line TEXT,
+                    end_line TEXT
+                )""", dimension));
+        log.info("document_chunks 表重建完成（维度={}）", dimension);
     }
 
     @Transactional
@@ -81,7 +113,7 @@ public class EmbeddingConfigService {
         return repository.save(entity);
     }
 
-    /** 测试 Embedding 连接 */
+    /** 测试 Embedding 连接，同时检测真实向量维度 */
     public TestResult testConnection(UUID id) {
         EmbeddingConfigEntity entity = repository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("配置不存在: " + id));
@@ -93,14 +125,19 @@ public class EmbeddingConfigService {
             long elapsed = System.currentTimeMillis() - start;
             int dim = response.content().vector().length;
             boolean success = dim > 0;
+            // 同时更新配置中的维度（确保与模型实际输出一致）
+            if (success && entity.getDimension() != dim) {
+                entity.setDimension(dim);
+                repository.save(entity);
+            }
             return new TestResult(success,
                     success ? "连接成功，向量维度: " + dim : "响应为空",
-                    elapsed);
+                    elapsed, dim);
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - start;
             log.error("Embedding 测试失败: {}", entity.getName(), e);
             String detail = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-            return new TestResult(false, "连接失败: " + detail, elapsed);
+            return new TestResult(false, "连接失败: " + detail, elapsed, 0);
         }
     }
 
@@ -139,5 +176,5 @@ public class EmbeddingConfigService {
         return copy;
     }
 
-    public record TestResult(boolean success, String message, long responseTimeMs) {}
+    public record TestResult(boolean success, String message, long responseTimeMs, int dimension) {}
 }

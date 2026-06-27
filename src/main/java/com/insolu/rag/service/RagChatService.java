@@ -31,16 +31,19 @@ public class RagChatService {
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final EmbeddingModel embeddingModel;
     private final SpringAiModelRouterService modelRouter;
+    private final LlmConfigService llmConfigService;
 
     /** 缓存 Retriever 实例，避免每次查询重建 */
     private volatile EmbeddingStoreContentRetriever cachedRetriever;
 
     public RagChatService(EmbeddingStore<TextSegment> embeddingStore,
                           EmbeddingModel embeddingModel,
-                          SpringAiModelRouterService modelRouter) {
+                          SpringAiModelRouterService modelRouter,
+                          LlmConfigService llmConfigService) {
         this.embeddingStore = embeddingStore;
         this.embeddingModel = embeddingModel;
         this.modelRouter = modelRouter;
+        this.llmConfigService = llmConfigService;
     }
 
     /**
@@ -88,14 +91,31 @@ public class RagChatService {
                 + context + "\n"
                 + "=== 内容结束 ===";
 
-        // 3. 流式生成
+        // 3. 根据 supportsStreaming 标记精确选择调用方式
         UUID configId = UUID.fromString(modelKey);
         ChatClient chatClient = modelRouter.getChatClient(configId);
 
-        return chatClient.prompt()
-                .system(systemPrompt)
-                .user(query)
-                .stream()
-                .content();
+        boolean streaming = llmConfigService.findRawById(configId)
+                .map(e -> Boolean.TRUE.equals(e.getSupportsStreaming()))
+                .orElse(false);
+
+        if (streaming) {
+            log.debug("使用流式对话");
+            return chatClient.prompt()
+                    .system(systemPrompt)
+                    .user(query)
+                    .stream()
+                    .content();
+        } else {
+            log.debug("使用非流式对话（API 不支持流式）");
+            return Flux.defer(() -> {
+                String response = chatClient.prompt()
+                        .system(systemPrompt)
+                        .user(query)
+                        .call()
+                        .content();
+                return Flux.just(response != null ? response : "模型返回为空。");
+            });
+        }
     }
 }

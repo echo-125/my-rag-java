@@ -1,18 +1,62 @@
-- Task 1: 基础工程与双框架依赖配置
-  - Prompt: “根据 claude.md，帮我生成 Spring Boot 3.3 的 pom.xml。引入 LangChain4j 1.0.0-beta1+ 核心包（dev.langchain4j:langchain4j）和 pgvector 包（dev.langchain4j:langchain4j-pgvector），引入 Spring AI 1.0.0 GA+ 的 openai starter（org.springframework.ai:spring-ai-starter-model-openai）。引入 PostgreSQL 驱动、JPA、JavaParser。确保依赖无冲突。配置 application.yml 包含数据库连接和预置的多 LLM API 配置。”
-- Task 2: 数据库实体与 LangChain4j EmbeddingStore
-  - Prompt: “使用 JPA 创建 DocumentChunkEntity，包含 pgvector 向量字段和 8 个元数据字段。然后实现一个 LangChain4j 的 EmbeddingStore<TextSegment> 接口（dev.langchain4j.store.embedding.EmbeddingStore）的实现类 PgVectorEmbeddingStore，实现 add(Embedding, TextSegment)、addAll(List<Embedding>, List<TextSegment>)、findRelevant(Embedding, int, double) 等方法，使用 JPA 或 JdbcTemplate 进行向量存储和混合检索查询。”
-- Task 3: Java AST 切分器与其他文档处理器
-  - Prompt: “实现一个 JavaAstDocumentSplitter 实现 LangChain4j 的 DocumentSplitter 接口（dev.langchain4j.data.document.splitter.DocumentSplitter，方法：List<TextSegment> split(Document)），使用 JavaParser 将 Java 代码按类和方法切分，保留 8 个元数据。对于 JS/TS/Python，实现一个通用的 RegexSplitter。对于 PDF/Word/MD，使用 LangChain4j 的 DocumentByParagraphSplitter 或 DocumentByLineSplitter。”
-- Task 4: Spring AI 动态模型路由
-  - Prompt: “实现一个 SpringAiModelRouterService。读取 application.yml 中的模型列表配置，维护一个 Map<String, ChatModel>（org.springframework.ai.chat.model.ChatModel）。提供方法 getChatClient(String modelKey) 返回对应的 Spring AI ChatClient（通过 ChatClient.builder(chatModel).build() 构建）。”
-- Task 5: 离线入库与 SSE 可视化
-  - Prompt: “创建 IngestionController。提供一个 POST 接口接收前端传来的多个本地路径数组和处理选项。后端遍历路径，扫描文件，调用相应的 Splitter 切分，调用 EmbeddingModel 向量化并存入 EmbeddingStore。整个处理过程必须通过 SseEmitter 实时推送进度信息给前端，包括：当前处理文件名、切分出的 chunk 数、失败原因等。”
-- Task 6: 在线问答与混合检索
-  - Prompt: “创建 RagChatController。接收用户 query 和 modelKey。使用 LangChain4j 的 EmbeddingStoreContentRetriever（dev.langchain4j.rag.retriever.EmbeddingStoreContentRetriever，通过 builder 模式构建，设置 embeddingStore、embeddingModel、maxResults(5)）从 pgvector 检索相关代码/文档片段。将检索到的内容作为 context，使用 Spring AI 的 ChatClient（由 ModelRouter 获取）通过 chatClient.prompt().user(context + query).stream().content() 进行流式 (SSE) 返回。”
-- Task 7: 前端页面开发 (配置、可视化、对话)
-  - Prompt: "在 static 目录开发 index.html。使用本地 Tailwind CSS, ECharts, Mermaid。
-    1. 首页顶部是一个配置面板，支持输入多个本地路径，点击’开始入库’按钮触发后端 SSE 接口，并在下方实时显示处理日志流。
-    2. 左侧是聊天界面，顶部有模型切换下拉框，使用 fetch 调用后端 SSE 接口并渲染 Markdown。
-    3. 右侧是 Dashboard，用 Mermaid 画出系统架构流程图，用 ECharts 画出各项目代码量统计。"
+# 任务分解（全部已完成 ✅）
 
+## 原始任务
+
+- **Task 1** ✅ 基础工程与双框架依赖配置
+  - Spring Boot 4.1.0 + LangChain4j 1.17.0 + Spring AI 2.0.0 + PostgreSQL + JavaParser + Tika
+  - 额外添加：LangChain4j Ollama（本地 Embedding）、Spring AI Anthropic
+
+- **Task 2** ✅ 数据库实体与 LangChain4j EmbeddingStore
+  - `document_chunks` 表由 LangChain4j PgVectorEmbeddingStore 自动管理（`createTable=true`）
+  - 元数据使用 `COLUMN_PER_KEY` 模式存储为独立列
+  - 统计查询使用 JdbcTemplate（`DocumentChunkStatsRepository`）
+  - 额外创建：`LlmConfigEntity`、`EmbeddingConfigEntity`、`ProjectConfigEntity`、`QaHistoryEntity`
+
+- **Task 3** ✅ Java AST 切分器与其他文档处理器
+  - `JavaAstDocumentSplitter`：JavaParser 按类/方法/构造器切分
+  - `RegexSplitter`：JS/TS/Python/Go 各有独立正则模式
+  - `FileSplitterRouter`：按扩展名路由 + Tika 解析 + 元数据注入
+  - PDF/Word/MD 使用 DocumentByParagraphSplitter(1500, 150)
+
+- **Task 4** ✅ Spring AI 动态模型路由
+  - `SpringAiModelRouterService`：从数据库读取 LLM 配置，按 UUID 缓存 ChatModel
+  - `ChatModelBuilder`：支持 OpenAI 和 Anthropic 两种 API 格式
+  - `DatabaseBackedEmbeddingModel`：懒加载 EmbeddingModel，首次 embed 时从数据库读取配置
+
+- **Task 5** ✅ 离线入库与 SSE 可视化
+  - `IngestionController` + `IngestionService`：文件扫描 → 切分 → 批量 embedAll → 存储
+  - SSE 推送详细进度：进度条百分比、成功/失败/跳过统计、预计剩余时间
+
+- **Task 6** ✅ 在线问答与混合检索
+  - `RagChatService`：EmbeddingStoreContentRetriever Top-5 检索 + ChatClient 流式回答
+  - Retriever 实例缓存，避免重复创建
+
+- **Task 7** ✅ 前端页面开发
+  - 4 标签页：对话 / 仪表盘 / 文档入库 / 设置
+  - Toast 通知替代 alert、进度条、Markdown 渲染、ECharts 图表、Mermaid 架构图
+
+## 额外任务
+
+- **Task 8** ✅ LLM API 配置管理
+  - `LlmConfigEntity` + `LlmConfigService` + `LlmConfigController`
+  - API 密钥明文存储、API 响应脱敏、测试连接、激活/停用
+
+- **Task 9** ✅ Embedding 配置前端可管理化
+  - `EmbeddingConfigEntity` + `EmbeddingConfigService` + `EmbeddingConfigController`
+  - 支持 Ollama（本地）和 OpenAI 兼容两种 provider
+  - 前端设置页 Embedding 配置表格 + 模态框
+
+- **Task 10** ✅ Dashboard 真实数据 + QA 历史持久化
+  - `DashboardController` 通过 JdbcTemplate 查询真实统计
+  - `QaHistoryEntity` 问答历史持久化
+
+- **Task 11** ✅ 项目配置持久化
+  - `ProjectConfigEntity` + `ProjectConfigController`
+
+## 已验证功能
+
+- ✅ 文档入库：25 个文件（PDF/DOCX/XML）全部成功，84 chunks 入库
+- ✅ LLM API 测试连接：Anthropic 格式（mimo-v2.5-pro）连接成功
+- ✅ Embedding 测试连接：本地 Ollama qwen3-embedding:4b_Q6 向量维度 2560
+- ✅ 单元测试：16/16 通过
+- ✅ 前端 UI：4 标签页、Toast 通知、进度条、Markdown 渲染

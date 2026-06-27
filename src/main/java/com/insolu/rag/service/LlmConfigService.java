@@ -4,6 +4,8 @@ import com.insolu.rag.entity.LlmConfigEntity;
 import com.insolu.rag.entity.LlmConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,8 +41,9 @@ public class LlmConfigService {
                 .toList();
     }
 
-    /** 获取激活配置的原始实体（含明文密钥，内部使用） */
+    /** 获取激活配置的原始实体（含明文密钥，内部使用，带缓存） */
     @Transactional(readOnly = true)
+    @Cacheable(value = "activeLlmConfig", key = "'current'")
     public Optional<LlmConfigEntity> findActiveRaw() {
         return repository.findFirstByIsActiveTrue();
     }
@@ -59,6 +62,7 @@ public class LlmConfigService {
 
     /** 保存新配置 */
     @Transactional
+    @CacheEvict(value = "activeLlmConfig", allEntries = true)
     public LlmConfigEntity save(LlmConfigEntity entity) {
         LlmConfigEntity saved = repository.save(entity);
         repository.flush();
@@ -67,6 +71,7 @@ public class LlmConfigService {
 
     /** 更新配置 */
     @Transactional
+    @CacheEvict(value = "activeLlmConfig", allEntries = true)
     public LlmConfigEntity update(UUID id, LlmConfigEntity updated) {
         LlmConfigEntity existing = repository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("配置不存在: " + id));
@@ -89,14 +94,15 @@ public class LlmConfigService {
 
     /** 删除配置 */
     @Transactional
+    @CacheEvict(value = "activeLlmConfig", allEntries = true)
     public void delete(UUID id) {
         repository.deleteById(id);
     }
 
-    /** 激活指定配置（同时停用其他） */
+    /** 激活指定配置（允许多个同时激活） */
     @Transactional
+    @CacheEvict(value = "activeLlmConfig", allEntries = true)
     public LlmConfigEntity activate(UUID id) {
-        repository.deactivateAll();
         LlmConfigEntity entity = repository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("配置不存在: " + id));
         entity.setIsActive(true);
@@ -107,6 +113,7 @@ public class LlmConfigService {
 
     /** 停用指定配置 */
     @Transactional
+    @CacheEvict(value = "activeLlmConfig", allEntries = true)
     public LlmConfigEntity deactivate(UUID id) {
         LlmConfigEntity entity = repository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("配置不存在: " + id));
@@ -117,41 +124,59 @@ public class LlmConfigService {
     }
 
     /**
-     * 测试 API 连接。
+     * 测试 API 连接，同时检测流式支持并存入数据库。
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public TestResult testConnection(UUID id) {
         LlmConfigEntity entity = repository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("配置不存在: " + id));
 
         String apiKey = entity.getApiKey();
         if (apiKey == null || apiKey.isBlank()) {
-            return new TestResult(false, "API 密钥为空，请编辑配置填入密钥", 0, null);
+            return new TestResult(false, "API 密钥为空，请编辑配置填入密钥", 0, null, false);
         }
 
-        log.info("开始测试 API 连接: name={}, format={}, baseUrl={}, model={}, apiKey={}***",
-                entity.getName(), entity.getApiFormat(), entity.getBaseUrl(),
-                entity.getModelName(), apiKey.substring(0, Math.min(6, apiKey.length())));
+        log.info("开始测试 API 连接: name={}, format={}, baseUrl={}", entity.getName(), entity.getApiFormat(), entity.getBaseUrl());
 
         long start = System.currentTimeMillis();
         try {
             var chatModel = chatModelBuilder.build(entity, apiKey, Duration.ofSeconds(30));
-            log.info("ChatModel 构建成功，开始发送测试消息...");
+
+            // 1. 测试非流式调用
             String response = chatModel.call("Reply with exactly: OK");
             long elapsed = System.currentTimeMillis() - start;
-            log.info("API 测试成功: response={}, elapsed={}ms", response, elapsed);
             boolean success = response != null && !response.isBlank();
-            return new TestResult(success, success ? "连接成功" : "响应为空",
-                    elapsed, success ? response.trim() : null);
+
+            // 2. 测试流式调用
+            boolean streaming = false;
+            try {
+                var chatClient = org.springframework.ai.chat.client.ChatClient.create(chatModel);
+                var streamFlux = chatClient.prompt().user("Say hi").stream().content();
+                // 尝试获取第一个 token
+                String first = streamFlux.blockFirst();
+                streaming = first != null;
+                if (streaming) log.info("流式测试通过");
+            } catch (Exception se) {
+                log.info("流式测试失败: {}", se.getMessage());
+                streaming = false;
+            }
+
+            // 3. 保存流式支持标记到数据库
+            entity.setSupportsStreaming(streaming);
+            repository.save(entity);
+            repository.flush();
+
+            String msg = success
+                    ? (streaming ? "连接成功（支持流式）" : "连接成功（不支持流式，将使用非流式对话）")
+                    : "响应为空";
+            log.info("API 测试完成: success={}, streaming={}, elapsed={}ms", success, streaming, elapsed);
+            return new TestResult(success, msg, elapsed, success ? response.trim() : null, streaming);
+
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - start;
-            // 完整异常链日志
-            log.error("API 测试失败: name={}, format={}, baseUrl={}, model={}, elapsed={}ms",
-                    entity.getName(), entity.getApiFormat(), entity.getBaseUrl(),
-                    entity.getModelName(), elapsed, e);
-            // 提取根本原因
+            log.error("API 测试失败: name={}, elapsed={}ms", entity.getName(), elapsed, e);
             String detail = extractRootCause(e);
-            return new TestResult(false, "连接失败: " + detail, elapsed, null);
+            return new TestResult(false, "连接失败: " + detail, elapsed, null, false);
         }
     }
 
@@ -175,6 +200,7 @@ public class LlmConfigService {
         copy.setBaseUrl(source.getBaseUrl());
         copy.setApiFormat(source.getApiFormat());
         copy.setIsActive(source.getIsActive());
+        copy.setSupportsStreaming(source.getSupportsStreaming());
         // 密钥仅脱敏展示
         String key = source.getApiKey();
         if (key != null && key.length() > 4) {
@@ -185,5 +211,5 @@ public class LlmConfigService {
         return copy;
     }
 
-    public record TestResult(boolean success, String message, long responseTimeMs, String sampleResponse) {}
+    public record TestResult(boolean success, String message, long responseTimeMs, String sampleResponse, boolean supportsStreaming) {}
 }

@@ -16,6 +16,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import org.springframework.jdbc.core.JdbcTemplate;
+
 import java.util.List;
 
 /**
@@ -45,13 +47,17 @@ public class LangChain4jConfig {
             @Value("${spring.datasource.username}") String username,
             @Value("${spring.datasource.password}") String password,
             @Value("${pgvector.table}") String table,
-            EmbeddingConfigService embeddingConfigService) {
+            EmbeddingConfigService embeddingConfigService,
+            JdbcTemplate jdbcTemplate) {
 
         // 从激活的 embedding 配置获取维度
         int dimension = embeddingConfigService.findActive()
                 .map(EmbeddingConfigEntity::getDimension)
                 .orElse(2560);
-        log.info("PgVector 维度: {}", dimension);
+        log.info("PgVector 期望维度: {}", dimension);
+
+        // 启动时校验表的实际维度，不匹配则重建（CREATE TABLE IF NOT EXISTS 不会更新已有表的维度）
+        verifyOrRecreateTable(table, dimension, jdbcTemplate);
 
         String afterScheme = jdbcUrl.replace("jdbc:postgresql://", "");
         String noQuery = afterScheme.contains("?") ? afterScheme.substring(0, afterScheme.indexOf('?')) : afterScheme;
@@ -83,6 +89,33 @@ public class LangChain4jConfig {
                 .createTable(true)
                 .metadataStorageConfig(metadataConfig)
                 .build();
+    }
+
+    /**
+     * 启动时校验 document_chunks 表的向量维度是否与配置一致。
+     * 不一致时自动重建表，避免入库时出现 "expected X dimensions, not Y" 错误。
+     */
+    private void verifyOrRecreateTable(String table, int expectedDimension, JdbcTemplate jdbc) {
+        try {
+            // 查询表中 embedding 列的维度
+            Integer actualDimension = jdbc.queryForObject(
+                    "SELECT (regexp_match(format_type(a.atttypid, a.atttypmod), '\\((\\d+)\\)'))[1]::int " +
+                    "FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid " +
+                    "WHERE c.relname = ? AND a.attname = 'embedding' AND a.attnum > 0",
+                    Integer.class, table);
+
+            if (actualDimension == null) {
+                log.info("表 {} 不存在，将由 PgVectorEmbeddingStore 创建（维度={}）", table, expectedDimension);
+            } else if (actualDimension != expectedDimension) {
+                log.warn("表 {} 维度不匹配：实际={}, 期望={}，自动重建表", table, actualDimension, expectedDimension);
+                jdbc.execute("DROP TABLE IF EXISTS " + table);
+                // 表不存在时 createTable=true 会自动创建
+            } else {
+                log.info("表 {} 维度校验通过: {}", table, actualDimension);
+            }
+        } catch (Exception e) {
+            log.warn("维度校验异常（表可能不存在），将由 PgVectorEmbeddingStore 自动创建: {}", e.getMessage());
+        }
     }
 
     /**

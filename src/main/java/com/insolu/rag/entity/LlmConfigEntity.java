@@ -40,6 +40,10 @@ public class LlmConfigEntity {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = false;
 
+    /** 是否支持流式请求（测试连接时自动检测） */
+    @Column(name = "supports_streaming", nullable = false)
+    private Boolean supportsStreaming = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -79,6 +83,9 @@ public class LlmConfigEntity {
 
     public Boolean getIsActive() { return isActive; }
     public void setIsActive(Boolean active) { isActive = active; }
+
+    public Boolean getSupportsStreaming() { return supportsStreaming; }
+    public void setSupportsStreaming(Boolean supportsStreaming) { this.supportsStreaming = supportsStreaming; }
 
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
