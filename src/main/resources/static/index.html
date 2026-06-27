@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>个人RAG系统</title>
+    <script src="lib/echarts.min.js"></script>
+    <script src="lib/mermaid.min.js"></script>
+    <script src="lib/marked.min.js"></script>
+    <link rel="stylesheet" href="lib/tailwind.min.css">
+    <link rel="stylesheet" href="lib/mermaid.min.css">
+    <style>
+        :root {
+            --bg-body: #0f172a;
+            --bg-card: #1e293b;
+            --bg-input: #334155;
+            --bg-hover: #475569;
+            --border: #475569;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #22c55e;
+            --error: #ef4444;
+            --warning: #eab308;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--bg-body);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        /* ===== 布局 ===== */
+        .app-container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+        /* ===== 标题 ===== */
+        .app-header { margin-bottom: 24px; }
+        .app-header h1 { font-size: 2rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; }
+        .app-header p { color: var(--text-muted); font-size: 0.875rem; margin-top: 4px; }
+
+        /* ===== Tab 导航 ===== */
+        .tab-nav {
+            display: flex; gap: 0; border-bottom: 1px solid var(--border);
+            margin-bottom: 24px;
+        }
+        .tab-btn {
+            padding: 12px 24px; border: none; background: transparent;
+            color: var(--text-muted); cursor: pointer; font-size: 0.9375rem;
+            font-weight: 500; border-bottom: 2px solid transparent;
+            transition: all 0.2s ease; position: relative;
+        }
+        .tab-btn:hover { color: var(--text-secondary); }
+        .tab-btn.active {
+            color: var(--accent); border-bottom-color: var(--accent);
+        }
+
+        /* ===== 卡片 ===== */
+        .card {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 12px; padding: 24px;
+        }
+        .card-title { font-size: 1.125rem; font-weight: 600; margin-bottom: 16px; }
+
+        /* ===== 输入框 ===== */
+        .input-field {
+            background: var(--bg-input); border: 1px solid var(--border);
+            border-radius: 8px; color: var(--text-primary); padding: 10px 14px;
+            width: 100%; font-size: 0.875rem; transition: border-color 0.2s;
+        }
+        .input-field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+        .input-field::placeholder { color: var(--text-muted); }
+
+        /* ===== 按钮 ===== */
+        .btn {
+            padding: 10px 20px; border: none; border-radius: 8px;
+            cursor: pointer; font-weight: 500; font-size: 0.875rem;
+            transition: all 0.15s ease; display: inline-flex; align-items: center; gap: 6px;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+        .btn-secondary { background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); }
+        .btn-secondary:hover:not(:disabled) { background: var(--bg-hover); }
+        .btn-danger { background: rgba(239,68,68,0.15); color: var(--error); border: 1px solid rgba(239,68,68,0.3); }
+        .btn-danger:hover:not(:disabled) { background: rgba(239,68,68,0.25); }
+        .btn-sm { padding: 6px 12px; font-size: 0.8125rem; }
+
+        /* ===== 下拉框 ===== */
+        .select-field {
+            background: var(--bg-input); border: 1px solid var(--border);
+            border-radius: 8px; color: var(--text-primary); padding: 10px 14px;
+            font-size: 0.875rem; cursor: pointer;
+        }
+        .select-field:focus { outline: none; border-color: var(--accent); }
+
+        /* ===== 标签 ===== */
+        .label { display: block; font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
+
+        /* ===== 日志区域 ===== */
+        .log-container {
+            background: #0c1222; border: 1px solid var(--border); border-radius: 8px;
+            padding: 16px; height: 320px; overflow-y: auto; font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+            font-size: 0.8125rem; line-height: 1.8;
+        }
+        .log-container::-webkit-scrollbar { width: 6px; }
+        .log-container::-webkit-scrollbar-track { background: transparent; }
+        .log-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        .log-line { white-space: pre-wrap; word-break: break-all; }
+        .log-info { color: var(--text-secondary); }
+        .log-processing { color: var(--accent); }
+        .log-success { color: var(--success); }
+        .log-error { color: var(--error); }
+        .log-skip { color: var(--warning); }
+        .log-done { color: var(--success); font-weight: 600; }
+
+        /* ===== 聊天 ===== */
+        .chat-container {
+            display: flex; gap: 16px; height: calc(100vh - 200px); min-height: 500px;
+        }
+        .chat-main { flex: 1; display: flex; flex-direction: column; }
+        .chat-messages {
+            flex: 1; overflow-y: auto; padding: 16px;
+            background: #0c1222; border: 1px solid var(--border); border-radius: 8px;
+            margin-bottom: 12px;
+        }
+        .chat-messages::-webkit-scrollbar { width: 6px; }
+        .chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        .msg { margin-bottom: 16px; display: flex; gap: 10px; }
+        .msg-avatar {
+            width: 32px; height: 32px; border-radius: 8px; display: flex;
+            align-items: center; justify-content: center; font-size: 0.75rem;
+            font-weight: 600; flex-shrink: 0;
+        }
+        .msg-user .msg-avatar { background: rgba(59,130,246,0.2); color: var(--accent); }
+        .msg-ai .msg-avatar { background: rgba(34,197,94,0.2); color: var(--success); }
+        .msg-body { flex: 1; min-width: 0; }
+        .msg-name { font-size: 0.8125rem; font-weight: 600; margin-bottom: 4px; }
+        .msg-user .msg-name { color: var(--accent); }
+        .msg-ai .msg-name { color: var(--success); }
+        .msg-content { font-size: 0.875rem; color: var(--text-primary); line-height: 1.7; }
+        .msg-content p { margin: 6px 0; }
+        .msg-content pre { background: var(--bg-input); padding: 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+        .msg-content code { font-family: "Cascadia Code", "Fira Code", monospace; font-size: 0.8125rem; }
+        .msg-content ul, .msg-content ol { padding-left: 20px; margin: 6px 0; }
+        .msg-content blockquote { border-left: 3px solid var(--accent); padding-left: 12px; color: var(--text-secondary); margin: 8px 0; }
+        .msg-content h1, .msg-content h2, .msg-content h3 { margin: 12px 0 6px; }
+        .msg-content h1 { font-size: 1.25rem; }
+        .msg-content h2 { font-size: 1.125rem; }
+        .msg-content h3 { font-size: 1rem; }
+        .chat-input-area { display: flex; gap: 8px; }
+        .chat-input-area .input-field { flex: 1; }
+        .welcome-msg {
+            text-align: center; color: var(--text-muted); padding: 60px 20px;
+        }
+        .welcome-msg .icon { font-size: 3rem; margin-bottom: 12px; }
+        .welcome-msg p { font-size: 0.9375rem; }
+
+        /* ===== Dashboard ===== */
+        .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .stat-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .stat-card {
+            background: var(--bg-input); border-radius: 10px; padding: 16px;
+            text-align: center;
+        }
+        .stat-card .stat-value { font-size: 1.75rem; font-weight: 700; color: var(--accent); }
+        .stat-card .stat-label { font-size: 0.8125rem; color: var(--text-muted); margin-top: 4px; }
+        .mermaid-wrapper {
+            background: #0c1222; border-radius: 8px; padding: 16px;
+            display: flex; justify-content: center; overflow-x: auto;
+        }
+        .chart-wrapper { height: 320px; }
+        .qa-list { max-height: 300px; overflow-y: auto; }
+        .qa-item {
+            padding: 10px 0; border-bottom: 1px solid var(--border);
+        }
+        .qa-item:last-child { border-bottom: none; }
+        .qa-question { font-size: 0.875rem; color: var(--text-primary); font-weight: 500; }
+        .qa-answer { font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px; }
+        .qa-time { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
+
+        /* ===== 项目配置行 ===== */
+        .project-row {
+            display: flex; gap: 10px; align-items: flex-start;
+            padding: 12px; background: var(--bg-input); border-radius: 8px;
+            margin-bottom: 8px; border: 1px solid var(--border);
+        }
+        .project-row .field { flex: 1; }
+        .project-row .btn-remove {
+            background: transparent; border: none; color: var(--text-muted);
+            cursor: pointer; font-size: 1.25rem; padding: 8px; border-radius: 6px;
+            transition: all 0.15s;
+        }
+        .project-row .btn-remove:hover { color: var(--error); background: rgba(239,68,68,0.1); }
+
+        /* ===== 隐藏/显示 ===== */
+        .hidden { display: none !important; }
+
+        /* ===== Toast 通知 ===== */
+        .toast-container {
+            position: fixed; top: 20px; right: 20px; z-index: 9999;
+            display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+        }
+        .toast {
+            pointer-events: auto;
+            padding: 12px 20px; border-radius: 10px; font-size: 0.875rem;
+            color: white; min-width: 280px; max-width: 420px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            animation: toastIn 0.3s ease;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .toast.removing { animation: toastOut 0.3s ease forwards; }
+        .toast-success { background: linear-gradient(135deg, #16a34a, #22c55e); }
+        .toast-error { background: linear-gradient(135deg, #dc2626, #ef4444); }
+        .toast-info { background: linear-gradient(135deg, #2563eb, #3b82f6); }
+        .toast-warning { background: linear-gradient(135deg, #d97706, #eab308); color: #1e293b; }
+        .toast-icon { font-size: 1.125rem; flex-shrink: 0; }
+        .toast-msg { flex: 1; line-height: 1.4; }
+        @keyframes toastIn { from { opacity:0; transform:translateX(40px); } to { opacity:1; transform:translateX(0); } }
+        @keyframes toastOut { from { opacity:1; transform:translateX(0); } to { opacity:0; transform:translateX(40px); } }
+
+        /* ===== 响应式 ===== */
+        @media (max-width: 768px) {
+            .dashboard-grid { grid-template-columns: 1fr; }
+            .chat-container { flex-direction: column; height: auto; }
+            .project-row { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+<div class="toast-container" id="toastContainer"></div>
+<div class="app-container">
+    <!-- ===== 顶部标题 ===== -->
+    <header class="app-header">
+        <h1>个人RAG系统</h1>
+        <p>个人知识库与代码库 RAG 系统</p>
+    </header>
+
+    <!-- ===== Tab 导航 ===== -->
+    <div class="tab-nav" id="tabNav">
+        <button class="tab-btn active" data-tab="chat" onclick="switchTab('chat')">对话</button>
+        <button class="tab-btn" data-tab="dashboard" onclick="switchTab('dashboard')">仪表盘</button>
+        <button class="tab-btn" data-tab="config" onclick="switchTab('config')">文档入库</button>
+        <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">设置</button>
+    </div>
+
+    <!-- ==================== 配置入库 ==================== -->
+    <div id="tab-config" class="tab-panel hidden">
+        <div class="card">
+            <h2 class="card-title">数据入库配置</h2>
+
+            <!-- 项目配置区域 -->
+            <div style="margin-bottom: 20px;">
+                <label class="label">项目配置</label>
+                <div id="projectConfigs">
+                    <!-- 动态生成 -->
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="addProject()" style="margin-top: 8px;">
+                    <span>＋</span> 添加项目
+                </button>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                <button id="btnIngest" class="btn btn-primary" onclick="startIngestion()">
+                    <span>▶</span> 开始入库
+                </button>
+                <button class="btn btn-secondary" onclick="clearLogs()">
+                    <span>✕</span> 清空日志
+                </button>
+            </div>
+
+            <!-- 实时日志 -->
+            <label class="label">处理日志</label>
+            <!-- 进度条 -->
+            <div id="progressBar" class="hidden" style="margin-bottom:12px;">
+                <div style="display:flex; justify-content:space-between; font-size:0.8125rem; color:var(--text-secondary); margin-bottom:6px;">
+                    <span id="progressText">处理中...</span>
+                    <span id="progressPct">0%</span>
+                </div>
+                <div style="background:var(--bg-input); border-radius:6px; height:8px; overflow:hidden;">
+                    <div id="progressFill" style="background:linear-gradient(90deg,#3b82f6,#22c55e); height:100%; width:0%; transition:width 0.3s ease; border-radius:6px;"></div>
+                </div>
+                <div style="display:flex; gap:16px; margin-top:8px; font-size:0.75rem;">
+                    <span style="color:var(--success);">✓ 成功: <b id="statSuccess">0</b></span>
+                    <span style="color:var(--error);">✗ 失败: <b id="statFailed">0</b></span>
+                    <span style="color:var(--warning);">⊘ 跳过: <b id="statSkipped">0</b></span>
+                    <span style="color:var(--text-muted);">⏱ 预计剩余: <b id="statEta">--</b></span>
+                </div>
+            </div>
+            <div class="log-container" id="logContainer">
+                <div class="log-line log-info">等待开始...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 设置 ==================== -->
+    <div id="tab-settings" class="tab-panel hidden">
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2 class="card-title" style="margin-bottom:0;">LLM API 配置管理</h2>
+                <button class="btn btn-primary" onclick="showLlmForm()">＋ 添加配置</button>
+            </div>
+
+            <!-- 配置表格 -->
+            <div style="overflow-x:auto;">
+                <table id="llmTable" style="width:100%; border-collapse:collapse; font-size:0.875rem;">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--border); text-align:left;">
+                            <th style="padding:10px 12px; color:var(--text-secondary);">名称</th>
+                            <th style="padding:10px 12px; color:var(--text-secondary);">模型</th>
+                            <th style="padding:10px 12px; color:var(--text-secondary);">Base URL</th>
+                            <th style="padding:10px 12px; color:var(--text-secondary);">API 格式</th>
+                            <th style="padding:10px 12px; color:var(--text-secondary);">状态</th>
+                            <th style="padding:10px 12px; color:var(--text-secondary);">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="llmTableBody">
+                        <tr><td colspan="6" style="padding:24px; text-align:center; color:var(--text-muted);">加载中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 添加/编辑表单模态框 -->
+        <div id="llmModal" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:1000;">
+            <div class="card" style="width:520px; max-height:90vh; overflow-y:auto;">
+                <h3 id="llmModalTitle" class="card-title">添加 LLM 配置</h3>
+                <form id="llmForm" onsubmit="saveLlmConfig(event)">
+                    <input type="hidden" id="llmId">
+                    <div style="margin-bottom:14px;">
+                        <label class="label">配置名称 *</label>
+                        <input id="llmName" class="input-field" placeholder="如 DeepSeek-Coder" required>
+                    </div>
+                    <div style="margin-bottom:14px;">
+                        <label class="label">模型名称 *</label>
+                        <input id="llmModel" class="input-field" placeholder="如 deepseek-coder" required>
+                    </div>
+                    <div style="margin-bottom:14px;">
+                        <label class="label">Base URL *</label>
+                        <input id="llmBaseUrl" class="input-field" placeholder="https://api.deepseek.com/v1" required>
+                    </div>
+                    <div style="margin-bottom:14px;">
+                        <label class="label">API Key *</label>
+                        <input id="llmApiKey" type="password" class="input-field" placeholder="sk-..." autocomplete="off">
+                    </div>
+                    <div style="margin-bottom:20px;">
+                        <label class="label">API 格式 *</label>
+                        <select id="llmFormat" class="select-field" style="width:100%;">
+                            <option value="openai_chat_completions">OpenAI Chat Completions</option>
+                            <option value="anthropic_messages">Anthropic Messages</option>
+                        </select>
+                    </div>
+                    <div style="display:flex; gap:10px; justify-content:flex-end;">
+                        <button type="button" class="btn btn-secondary" onclick="hideLlmForm()">取消</button>
+                        <button type="submit" class="btn btn-primary">保存</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- ===== Embedding 配置管理 ===== -->
+        <div class="card" style="margin-top: 16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2 class="card-title" style="margin-bottom:0;">Embedding 模型配置</h2>
+                <button class="btn btn-primary" onclick="showEmbedForm()">＋ 添加配置</button>
+            </div>
+            <div style="overflow-x:auto;">
+                <table id="embedTable" style="width:100%; border-collapse:collapse; font-size:0.875rem;">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--border); text-align:left;">
+                            <th style="padding:10px 12px; color:var(--text-secondary);">名称</th>
+                            <th style="padding:10px 12px; color:var(--text-secondary);">Provider</th>
+                            <th style="padding:10px 12px; color:var(--text-secondary);">模型</th>
+                            <th style="padding:10px 12px; color:var(--text-secondary);">维度</th>
+                            <th style="padding:10px 12px; color:var(--text-secondary);">状态</th>
+                            <th style="padding:10px 12px; color:var(--text-secondary);">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="embedTableBody">
+                        <tr><td colspan="6" style="padding:24px; text-align:center; color:var(--text-muted);">加载中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Embedding 配置模态框 -->
+        <div id="embedModal" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:1000;">
+            <div class="card" style="width:520px; max-height:90vh; overflow-y:auto;">
+                <h3 id="embedModalTitle" class="card-title">添加 Embedding 配置</h3>
+                <form id="embedForm" onsubmit="saveEmbedConfig(event)">
+                    <input type="hidden" id="embedId">
+                    <div style="margin-bottom:14px;">
+                        <label class="label">配置名称 *</label>
+                        <input id="embedName" class="input-field" placeholder="如 本地 Ollama qwen3-embedding" required>
+                    </div>
+                    <div style="margin-bottom:14px;">
+                        <label class="label">Provider *</label>
+                        <select id="embedProvider" class="select-field" style="width:100%;" onchange="onEmbedProviderChange()">
+                            <option value="ollama">Ollama（本地）</option>
+                            <option value="openai">OpenAI 兼容 API</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom:14px;">
+                        <label class="label">Base URL *</label>
+                        <input id="embedBaseUrl" class="input-field" placeholder="http://localhost:11434" required>
+                    </div>
+                    <div style="margin-bottom:14px;">
+                        <label class="label">模型名称 *</label>
+                        <input id="embedModelName" class="input-field" placeholder="qwen3-embedding:4b_Q6" required>
+                    </div>
+                    <div id="embedApiKeyRow" style="margin-bottom:14px; display:none;">
+                        <label class="label">API Key</label>
+                        <input id="embedApiKey" type="password" class="input-field" placeholder="sk-..." autocomplete="off">
+                    </div>
+                    <div style="margin-bottom:20px;">
+                        <label class="label">向量维度 *</label>
+                        <input id="embedDimension" type="number" class="input-field" value="2560" required>
+                    </div>
+                    <div style="display:flex; gap:10px; justify-content:flex-end;">
+                        <button type="button" class="btn btn-secondary" onclick="hideEmbedForm()">取消</button>
+                        <button type="submit" class="btn btn-primary">保存</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 问答对话 ==================== -->
+    <div id="tab-chat" class="tab-panel">
+        <div class="card" style="padding: 16px;">
+            <div class="chat-container">
+                <div class="chat-main">
+                    <!-- 顶部工具栏 -->
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                        <select id="modelSelect" class="select-field">
+                            <option value="">加载中...</option>
+                        </select>
+                        <button class="btn btn-secondary btn-sm" onclick="clearChat()">清空对话</button>
+                    </div>
+
+                    <!-- 聊天消息区域 -->
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="welcome-msg">
+                            <div class="icon">💬</div>
+                            <p>欢迎使用 RAG 问答系统</p>
+                            <p style="font-size: 0.8125rem; color: var(--text-muted); margin-top: 8px;">输入您的问题，系统将从知识库中检索相关内容并生成回答</p>
+                        </div>
+                    </div>
+
+                    <!-- 输入区域 -->
+                    <div class="chat-input-area">
+                        <input type="text" id="chatInput" class="input-field"
+                               placeholder="输入问题..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}">
+                        <button id="btnSend" class="btn btn-primary" onclick="sendChat()">
+                            发送
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== Dashboard ==================== -->
+    <div id="tab-dashboard" class="tab-panel hidden">
+        <div class="dashboard-grid">
+            <!-- 左上：Mermaid 架构图 -->
+            <div class="card">
+                <h3 class="card-title">系统架构流程</h3>
+                <div class="mermaid-wrapper">
+                    <div id="mermaidDiagram" class="mermaid">
+graph LR
+    A[本地文件] --> B[文档解析器]
+    B --> C[AST切分器]
+    C --> D[Embedding模型]
+    D --> E[向量数据库]
+    E --> F[检索器]
+    F --> G[LLM生成回答]
+    G --> H[用户界面]
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右上：ECharts 图表 -->
+            <div class="card">
+                <h3 class="card-title">各项目代码量统计</h3>
+                <div id="echartsChart" class="chart-wrapper"></div>
+            </div>
+
+            <!-- 左下：最近问答记录 -->
+            <div class="card">
+                <h3 class="card-title">最近问答记录</h3>
+                <div class="qa-list" id="recentQA">
+                    <div style="text-align: center; color: var(--text-muted); padding: 32px 0;">暂无记录</div>
+                </div>
+            </div>
+
+            <!-- 右下：系统状态 -->
+            <div class="card">
+                <h3 class="card-title">系统状态</h3>
+                <div class="stat-cards">
+                    <div class="stat-card">
+                        <div class="stat-value" id="statChunks">0</div>
+                        <div class="stat-label">总 Chunk 数</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statFiles">0</div>
+                        <div class="stat-label">已处理文件</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statProjects">0</div>
+                        <div class="stat-label">项目数</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="statLastTime">--</div>
+                        <div class="stat-label">最近处理时间</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ========== 全局状态 ==========
+let projectIndex = 0;
+const qaHistory = [];       // {question, answer, time}
+let totalChunks = 0;
+let totalFiles = 0;
+let lastProcessTime = null;
+
+// ========== Tab 切换 ==========
+function switchTab(tabName) {
+    document.querySelectorAll('.tab-panel').forEach(el => el.classList.add('hidden'));
+    document.getElementById('tab-' + tabName).classList.remove('hidden');
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelector(`.tab-btn[data-tab="${tabName}"]`).classList.add('active');
+
+    if (tabName === 'dashboard') refreshDashboard();
+    if (tabName === 'chat') loadModelList();
+    if (tabName === 'settings') { loadLlmConfigs(); loadEmbedConfigs(); }
+}
+
+// ========== 配置入库：动态项目 ==========
+function addProject(name, path) {
+    const container = document.getElementById('projectConfigs');
+    const idx = projectIndex++;
+    const row = document.createElement('div');
+    row.className = 'project-row';
+    row.id = 'project-' + idx;
+    row.innerHTML = `
+        <div class="field">
+            <input class="input-field" placeholder="项目名称" value="${escHtml(name || '')}">
+        </div>
+        <div class="field" style="flex: 2;">
+            <input class="input-field" placeholder="本地路径，如 D:\\code\\myproject" value="${escHtml(path || '')}">
+        </div>
+        <button class="btn-remove" onclick="removeProject(${idx})" title="删除">✕</button>
+    `;
+    container.appendChild(row);
+}
+
+function removeProject(idx) {
+    const row = document.getElementById('project-' + idx);
+    if (row) row.remove();
+}
+
+function getProjects() {
+    const rows = document.querySelectorAll('#projectConfigs .project-row');
+    const projects = [];
+    rows.forEach(row => {
+        const inputs = row.querySelectorAll('input');
+        const name = inputs[0].value.trim();
+        const path = inputs[1].value.trim();
+        if (name && path) projects.push({ name, path });
+    });
+    return projects;
+}
+
+// ========== 入库 SSE ==========
+async function startIngestion() {
+    const projects = getProjects();
+    if (projects.length === 0) {
+        toast('请至少添加一个项目配置（项目名称 + 路径）', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('btnIngest');
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳</span> 入库中...';
+    document.getElementById('progressBar').classList.remove('hidden');
+    updateProgress(0, '准备中...', 0, 0, 0, '--');
+    addLog('info', '开始入库，共 ' + projects.length + ' 个项目...');
+
+    for (const project of projects) {
+        addLog('info', '── 项目: ' + project.name + ' (' + project.path + ')');
+        try {
+            const response = await fetch('/api/ingestion/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paths: [project.path], projectName: project.name })
+            });
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (trimmed.startsWith('data:')) {
+                        try {
+                            const data = JSON.parse(trimmed.substring(5));
+                            addLog(data.status, data.message);
+
+                            // 更新进度条和统计
+                            if (data.stats) {
+                                const s = data.stats;
+                                updateProgress(
+                                    s.progressPercentage || 0,
+                                    s.currentFile || data.message,
+                                    s.successFiles || 0,
+                                    s.failedFiles || 0,
+                                    s.skippedFiles || 0,
+                                    s.estimatedRemainingTime || '--'
+                                );
+                                // 更新全局计数
+                                totalChunks = (totalChunks || 0) + (s.successFiles || 0);
+                                totalFiles = (totalFiles || 0) + (s.processedFiles || 0);
+                            }
+
+                            if (data.status === 'done') {
+                                toast(data.message, 'success', 6000);
+                            }
+                        } catch (e) {}
+                    }
+                }
+            }
+        } catch (e) {
+            addLog('error', '请求失败: ' + e.message);
+            toast('入库请求失败: ' + e.message, 'error');
+        }
+    }
+
+    lastProcessTime = new Date().toLocaleTimeString();
+    addLog('done', '全部入库完成！');
+    btn.disabled = false;
+    btn.innerHTML = '<span>▶</span> 开始入库';
+}
+
+function updateProgress(pct, currentFile, success, failed, skipped, eta) {
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressPct').textContent = pct + '%';
+    document.getElementById('progressText').textContent = currentFile
+        ? '处理中: ' + (currentFile.length > 40 ? currentFile.substring(0, 40) + '...' : currentFile)
+        : '处理中...';
+    document.getElementById('statSuccess').textContent = success;
+    document.getElementById('statFailed').textContent = failed;
+    document.getElementById('statSkipped').textContent = skipped;
+    document.getElementById('statEta').textContent = eta;
+}
+
+function addLog(status, message) {
+    const container = document.getElementById('logContainer');
+    const time = new Date().toLocaleTimeString();
+    const icons = { info: 'ℹ', processing: '⚙', success: '✓', error: '✗', skip: '⊘', done: '✔' };
+    const icon = icons[status] || '•';
+    const div = document.createElement('div');
+    div.className = 'log-line log-' + status;
+    div.textContent = '[' + time + '] ' + icon + ' ' + message;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+function clearLogs() {
+    document.getElementById('logContainer').innerHTML = '<div class="log-line log-info">等待开始...</div>';
+}
+
+// ========== 问答对话 ==========
+async function loadModelList() {
+    try {
+        const resp = await fetch('/api/models');
+        if (resp.ok) {
+            const models = await resp.json();
+            const select = document.getElementById('modelSelect');
+            if (models.length > 0) {
+                select.innerHTML = models.map(m =>
+                    '<option value="' + m.id + '">' + escHtml(m.name) + ' (' + escHtml(m.modelName) + ')</option>'
+                ).join('');
+            } else {
+                select.innerHTML = '<option value="">请先在 LLM 配置页激活模型</option>';
+            }
+        }
+    } catch (e) { /* 保持默认选项 */ }
+}
+
+async function sendChat() {
+    const input = document.getElementById('chatInput');
+    const query = input.value.trim();
+    if (!query) return;
+    input.value = '';
+
+    const modelKey = document.getElementById('modelSelect').value;
+    const container = document.getElementById('chatMessages');
+
+    // 移除欢迎消息
+    const welcome = container.querySelector('.welcome-msg');
+    if (welcome) welcome.remove();
+
+    // 显示用户消息
+    container.innerHTML += `
+        <div class="msg msg-user">
+            <div class="msg-avatar">You</div>
+            <div class="msg-body">
+                <div class="msg-name">You</div>
+                <div class="msg-content"><p>${escHtml(query)}</p></div>
+            </div>
+        </div>`;
+
+    // 创建 AI 消息占位
+    const aiDiv = document.createElement('div');
+    aiDiv.className = 'msg msg-ai';
+    aiDiv.innerHTML = `
+        <div class="msg-avatar">AI</div>
+        <div class="msg-body">
+            <div class="msg-name">Assistant</div>
+            <div class="msg-content ai-response"><p style="color: var(--text-muted);">思考中...</p></div>
+        </div>`;
+    container.appendChild(aiDiv);
+    const responseDiv = aiDiv.querySelector('.ai-response');
+    container.scrollTop = container.scrollHeight;
+
+    const btn = document.getElementById('btnSend');
+    btn.disabled = true;
+
+    try {
+        const resp = await fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, modelKey })
+        });
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith('data:') && trimmed !== 'data:[DONE]') {
+                    fullText += trimmed.substring(5);
+                }
+            }
+            if (fullText) {
+                try { responseDiv.innerHTML = marked.parse(fullText); }
+                catch (e) { responseDiv.textContent = fullText; }
+            }
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // 记录到 QA 历史
+        qaHistory.unshift({ question: query, answer: fullText, time: new Date().toLocaleTimeString() });
+
+        // 保存到数据库
+        const modelSelect = document.getElementById('modelSelect');
+        const modelName = modelSelect.options[modelSelect.selectedIndex]?.text || 'unknown';
+        fetch('/api/chat/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: query, answer: fullText, modelName })
+        }).catch(() => {});
+
+    } catch (e) {
+        responseDiv.innerHTML = '<p style="color: var(--error);">请求失败: ' + escHtml(e.message) + '</p>';
+    } finally {
+        btn.disabled = false;
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
+function clearChat() {
+    document.getElementById('chatMessages').innerHTML = `
+        <div class="welcome-msg">
+            <div class="icon">💬</div>
+            <p>对话已清空，请输入新问题</p>
+        </div>`;
+}
+
+// ========== Dashboard ==========
+let mermaidInitialized = false;
+
+function refreshDashboard() {
+    // Mermaid 只初始化一次
+    if (!mermaidInitialized) {
+        try {
+            mermaid.initialize({ theme: 'dark', startOnLoad: false });
+            mermaid.run({ nodes: document.querySelectorAll('.mermaid:not([data-processed])') });
+            mermaidInitialized = true;
+        } catch (e) { console.warn('Mermaid init failed:', e); }
+    }
+
+    // ECharts
+    initECharts();
+
+    // 从后端获取真实系统状态
+    fetch('/api/dashboard/stats')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(stats => {
+            document.getElementById('statChunks').textContent = stats.totalChunks || 0;
+            document.getElementById('statFiles').textContent = stats.fileCount || 0;
+            document.getElementById('statProjects').textContent = stats.projectCount || 0;
+        })
+        .catch(() => {
+            document.getElementById('statChunks').textContent = totalChunks || 0;
+            document.getElementById('statFiles').textContent = totalFiles || 0;
+            document.getElementById('statProjects').textContent = getProjects().length || 0;
+        });
+    document.getElementById('statLastTime').textContent = lastProcessTime || '--';
+
+    // 从数据库获取最近问答记录
+    fetch('/api/dashboard/recent-qa')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(records => {
+            const qaContainer = document.getElementById('recentQA');
+            if (records.length === 0) {
+                qaContainer.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:32px 0;">暂无记录</div>';
+            } else {
+                qaContainer.innerHTML = records.map(qa => `
+                    <div class="qa-item">
+                        <div class="qa-question">Q: ${escHtml(qa.question)}</div>
+                        <div class="qa-answer">A: ${escHtml(qa.answer || '')}</div>
+                        <div class="qa-time">${qa.modelName || ''} | ${qa.createdAt ? new Date(qa.createdAt).toLocaleString() : ''}</div>
+                    </div>
+                `).join('');
+            }
+        })
+        .catch(() => {
+            // 降级使用内存中的历史
+            const qaContainer = document.getElementById('recentQA');
+            if (qaHistory.length === 0) {
+                qaContainer.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:32px 0;">暂无记录</div>';
+            } else {
+                qaContainer.innerHTML = qaHistory.slice(0, 10).map(qa => `
+                    <div class="qa-item">
+                        <div class="qa-question">Q: ${escHtml(qa.question)}</div>
+                        <div class="qa-answer">A: ${escHtml(qa.answer.substring(0, 120))}${qa.answer.length > 120 ? '...' : ''}</div>
+                        <div class="qa-time">${qa.time}</div>
+                    </div>
+                `).join('');
+            }
+        });
+}
+
+function initECharts() {
+    const dom = document.getElementById('echartsChart');
+    if (dom.dataset.init) return;
+    dom.dataset.init = '1';
+
+    const chart = echarts.init(dom, 'dark');
+
+    // 尝试从后端获取真实数据
+    fetch('/api/dashboard/language-stats')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then(stats => {
+            if (stats.length > 0) {
+                chart.setOption({
+                    tooltip: { trigger: 'axis' },
+                    grid: { left: 40, right: 16, top: 32, bottom: 40 },
+                    xAxis: {
+                        type: 'category',
+                        data: stats.map(s => s.language || 'unknown'),
+                        axisLabel: { color: '#94a3b8', rotate: 20 }
+                    },
+                    yAxis: { type: 'value', name: 'Chunks', axisLabel: { color: '#94a3b8' } },
+                    series: [{
+                        type: 'bar', data: stats.map(s => s.count),
+                        itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: '#3b82f6' },
+                            { offset: 1, color: '#1d4ed8' }
+                        ]), borderRadius: [6, 6, 0, 0] }
+                    }]
+                });
+            } else {
+                showEmptyChart(chart);
+            }
+        })
+        .catch(() => showEmptyChart(chart));
+}
+
+function showEmptyChart(chart) {
+    chart.setOption({
+        tooltip: { trigger: 'axis' },
+        grid: { left: 40, right: 16, top: 32, bottom: 40 },
+        xAxis: {
+            type: 'category',
+            data: ['Java', 'JavaScript', 'TypeScript', 'Python', 'SQL', 'XML', 'Markdown'],
+            axisLabel: { color: '#94a3b8', rotate: 20 }
+        },
+        yAxis: { type: 'value', name: 'Chunks', axisLabel: { color: '#94a3b8' } },
+        series: [{
+            type: 'bar', data: [0, 0, 0, 0, 0, 0, 0],
+            itemStyle: { color: '#334155', borderRadius: [6, 6, 0, 0] }
+        }]
+    });
+}
+
+// ========== LLM 配置管理 ==========
+async function loadLlmConfigs() {
+    try {
+        const resp = await fetch('/api/llm-configs');
+        if (!resp.ok) return;
+        const configs = await resp.json();
+        const tbody = document.getElementById('llmTableBody');
+
+        if (configs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--text-muted);">暂无配置，点击右上角"添加配置"创建</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = configs.map(c => `
+            <tr style="border-bottom:1px solid var(--border);" class="${c.isActive ? '' : ''}">
+                <td style="padding:10px 12px; font-weight:500;">${escHtml(c.name)}</td>
+                <td style="padding:10px 12px; color:var(--text-secondary);">${escHtml(c.modelName)}</td>
+                <td style="padding:10px 12px; color:var(--text-secondary); font-size:0.8125rem; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(c.baseUrl)}</td>
+                <td style="padding:10px 12px;">
+                    <span style="background:var(--bg-input); padding:2px 8px; border-radius:4px; font-size:0.75rem;">${c.apiFormat === 'openai_chat_completions' ? 'OpenAI' : 'Anthropic'}</span>
+                </td>
+                <td style="padding:10px 12px;">
+                    ${c.isActive
+                        ? '<span style="color:var(--success); font-weight:500;">● 已激活</span>'
+                        : '<span style="color:var(--text-muted);">○ 未激活</span>'}
+                </td>
+                <td style="padding:10px 12px;">
+                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <button class="btn btn-secondary btn-sm" onclick="testLlmConfig('${c.id}')" title="测试连接">测试</button>
+                        ${c.isActive
+                            ? `<button class="btn btn-secondary btn-sm" onclick="deactivateLlmConfig('${c.id}')" title="停用">停用</button>`
+                            : `<button class="btn btn-primary btn-sm" onclick="activateLlmConfig('${c.id}')" title="激活">激活</button>`}
+                        <button class="btn btn-secondary btn-sm" onclick="editLlmConfig('${c.id}')" title="编辑">编辑</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteLlmConfig('${c.id}', '${escHtml(c.name)}')" title="删除">删除</button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    } catch (e) {
+        console.error('加载 LLM 配置失败:', e);
+    }
+}
+
+function showLlmForm(config) {
+    document.getElementById('llmModal').classList.remove('hidden');
+    document.getElementById('llmModalTitle').textContent = config ? '编辑 LLM 配置' : '添加 LLM 配置';
+    document.getElementById('llmId').value = config ? config.id : '';
+    document.getElementById('llmName').value = config ? config.name : '';
+    document.getElementById('llmModel').value = config ? config.modelName : '';
+    document.getElementById('llmBaseUrl').value = config ? config.baseUrl : '';
+    document.getElementById('llmApiKey').value = '';
+    document.getElementById('llmApiKey').placeholder = config ? '留空则不修改' : 'sk-...';
+    document.getElementById('llmFormat').value = config ? config.apiFormat : 'openai_chat_completions';
+}
+
+function hideLlmForm() {
+    document.getElementById('llmModal').classList.add('hidden');
+}
+
+async function saveLlmConfig(e) {
+    e.preventDefault();
+    const id = document.getElementById('llmId').value;
+    const body = {
+        name: document.getElementById('llmName').value.trim(),
+        modelName: document.getElementById('llmModel').value.trim(),
+        baseUrl: document.getElementById('llmBaseUrl').value.trim(),
+        apiKey: document.getElementById('llmApiKey').value,
+        apiFormat: document.getElementById('llmFormat').value,
+        isActive: false
+    };
+
+    if (!body.name || !body.modelName || !body.baseUrl) { toast('请填写必填字段', 'warning'); return; }
+    if (!id && !body.apiKey) { toast('新建配置必须填写 API Key', 'warning'); return; }
+
+    try {
+        const url = id ? `/api/llm-configs/${id}` : '/api/llm-configs';
+        const method = id ? 'PUT' : 'POST';
+        const resp = await fetch(url, {
+            method, headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (resp.ok) {
+            hideLlmForm();
+            loadLlmConfigs();
+        } else {
+            toast('保存失败: ' + resp.status, 'error');
+        }
+    } catch (err) { toast('请求失败: ' + err.message, 'error'); }
+}
+
+async function editLlmConfig(id) {
+    try {
+        const resp = await fetch(`/api/llm-configs/${id}`);
+        if (resp.ok) showLlmForm(await resp.json());
+    } catch (e) { toast('获取配置失败', 'error'); }
+}
+
+async function deleteLlmConfig(id, name) {
+    if (!confirm(`确定删除配置 "${name}"？`)) return;
+    try {
+        await fetch(`/api/llm-configs/${id}`, { method: 'DELETE' });
+        loadLlmConfigs();
+    } catch (e) { toast('删除失败', 'error'); }
+}
+
+async function activateLlmConfig(id) {
+    try {
+        const resp = await fetch(`/api/llm-configs/${id}/activate`, { method: 'POST' });
+        if (resp.ok) loadLlmConfigs();
+    } catch (e) { toast('激活失败', 'error'); }
+}
+
+async function deactivateLlmConfig(id) {
+    try {
+        const resp = await fetch(`/api/llm-configs/${id}/deactivate`, { method: 'POST' });
+        if (resp.ok) loadLlmConfigs();
+    } catch (e) { toast('停用失败', 'error'); }
+}
+
+async function testLlmConfig(id) {
+    const btn = event.target;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '测试中...';
+    try {
+        const resp = await fetch(`/api/llm-configs/${id}/test`, { method: 'POST' });
+        const result = await resp.json();
+        if (result.success) {
+            toast('连接成功！响应时间: ' + result.responseTimeMs + 'ms', 'success');
+        } else {
+            toast('连接失败: ' + result.message, 'error', 6000);
+        }
+    } catch (e) { toast('测试请求异常: ' + e.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = origText; }
+}
+
+// ========== 工具函数 ==========
+// ========== Toast 通知 ==========
+function toast(msg, type = 'info', duration = 4000) {
+    const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
+    const container = document.getElementById('toastContainer');
+    const el = document.createElement('div');
+    el.className = `toast toast-${type}`;
+    el.innerHTML = `<span class="toast-icon">${icons[type] || icons.info}</span><span class="toast-msg">${escHtml(msg)}</span>`;
+    container.appendChild(el);
+    setTimeout(() => {
+        el.classList.add('removing');
+        setTimeout(() => el.remove(), 300);
+    }, duration);
+}
+
+// ========== Embedding 配置管理 ==========
+async function loadEmbedConfigs() {
+    try {
+        const resp = await fetch('/api/embedding-configs');
+        if (!resp.ok) return;
+        const configs = await resp.json();
+        const tbody = document.getElementById('embedTableBody');
+
+        if (configs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--text-muted);">暂无配置，点击右上角"添加配置"创建</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = configs.map(c => `
+            <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:10px 12px; font-weight:500;">${escHtml(c.name)}</td>
+                <td style="padding:10px 12px;"><span style="background:var(--bg-input); padding:2px 8px; border-radius:4px; font-size:0.75rem;">${c.provider === 'ollama' ? 'Ollama' : 'OpenAI'}</span></td>
+                <td style="padding:10px 12px; color:var(--text-secondary);">${escHtml(c.modelName)}</td>
+                <td style="padding:10px 12px; color:var(--text-secondary);">${c.dimension}</td>
+                <td style="padding:10px 12px;">${c.isActive ? '<span style="color:var(--success); font-weight:500;">● 已激活</span>' : '<span style="color:var(--text-muted);">○ 未激活</span>'}</td>
+                <td style="padding:10px 12px;">
+                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <button class="btn btn-secondary btn-sm" onclick="testEmbedConfig('${c.id}')">测试</button>
+                        ${c.isActive
+                            ? `<button class="btn btn-secondary btn-sm" onclick="deactivateEmbedConfig('${c.id}')">停用</button>`
+                            : `<button class="btn btn-primary btn-sm" onclick="activateEmbedConfig('${c.id}')">激活</button>`}
+                        <button class="btn btn-secondary btn-sm" onclick="editEmbedConfig('${c.id}')">编辑</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteEmbedConfig('${c.id}','${escHtml(c.name)}')">删除</button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    } catch (e) { console.error('加载 Embedding 配置失败:', e); }
+}
+
+function showEmbedForm(config) {
+    document.getElementById('embedModal').classList.remove('hidden');
+    document.getElementById('embedModalTitle').textContent = config ? '编辑 Embedding 配置' : '添加 Embedding 配置';
+    document.getElementById('embedId').value = config ? config.id : '';
+    document.getElementById('embedName').value = config ? config.name : '';
+    document.getElementById('embedProvider').value = config ? config.provider : 'ollama';
+    document.getElementById('embedBaseUrl').value = config ? config.baseUrl : 'http://localhost:11434';
+    document.getElementById('embedModelName').value = config ? config.modelName : '';
+    document.getElementById('embedApiKey').value = '';
+    document.getElementById('embedDimension').value = config ? config.dimension : 2560;
+    onEmbedProviderChange();
+}
+
+function hideEmbedForm() { document.getElementById('embedModal').classList.add('hidden'); }
+
+function onEmbedProviderChange() {
+    const provider = document.getElementById('embedProvider').value;
+    document.getElementById('embedApiKeyRow').style.display = provider === 'openai' ? 'block' : 'none';
+    if (provider === 'ollama') {
+        document.getElementById('embedBaseUrl').placeholder = 'http://localhost:11434';
+        document.getElementById('embedModelName').placeholder = 'qwen3-embedding:4b_Q6';
+    } else {
+        document.getElementById('embedBaseUrl').placeholder = 'https://api.openai.com/v1';
+        document.getElementById('embedModelName').placeholder = 'text-embedding-3-small';
+    }
+}
+
+async function saveEmbedConfig(e) {
+    e.preventDefault();
+    const id = document.getElementById('embedId').value;
+    const body = {
+        name: document.getElementById('embedName').value.trim(),
+        provider: document.getElementById('embedProvider').value,
+        baseUrl: document.getElementById('embedBaseUrl').value.trim(),
+        modelName: document.getElementById('embedModelName').value.trim(),
+        apiKey: document.getElementById('embedApiKey').value,
+        dimension: parseInt(document.getElementById('embedDimension').value) || 2560,
+        isActive: false
+    };
+    if (!body.name || !body.baseUrl || !body.modelName) { toast('请填写必填字段', 'warning'); return; }
+    if (body.provider === 'openai' && !id && !body.apiKey) { toast('OpenAI 兼容 API 必须填写 API Key', 'warning'); return; }
+
+    try {
+        const url = id ? `/api/embedding-configs/${id}` : '/api/embedding-configs';
+        const method = id ? 'PUT' : 'POST';
+        const resp = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (resp.ok) { hideEmbedForm(); loadEmbedConfigs(); toast('保存成功', 'success'); }
+        else { toast('保存失败: ' + resp.status, 'error'); }
+    } catch (err) { toast('请求失败: ' + err.message, 'error'); }
+}
+
+async function editEmbedConfig(id) {
+    try {
+        const resp = await fetch(`/api/embedding-configs/${id}`);
+        if (resp.ok) showEmbedForm(await resp.json());
+    } catch (e) { toast('获取配置失败', 'error'); }
+}
+
+async function deleteEmbedConfig(id, name) {
+    if (!confirm(`确定删除 Embedding 配置 "${name}"？`)) return;
+    try { await fetch(`/api/embedding-configs/${id}`, { method: 'DELETE' }); loadEmbedConfigs(); }
+    catch (e) { toast('删除失败', 'error'); }
+}
+
+async function activateEmbedConfig(id) {
+    try { const r = await fetch(`/api/embedding-configs/${id}/activate`, { method: 'POST' }); if (r.ok) loadEmbedConfigs(); }
+    catch (e) { toast('激活失败', 'error'); }
+}
+
+async function deactivateEmbedConfig(id) {
+    try { const r = await fetch(`/api/embedding-configs/${id}/deactivate`, { method: 'POST' }); if (r.ok) loadEmbedConfigs(); }
+    catch (e) { toast('停用失败', 'error'); }
+}
+
+async function testEmbedConfig(id) {
+    const btn = event.target; const orig = btn.textContent; btn.disabled = true; btn.textContent = '测试中...';
+    try {
+        const resp = await fetch(`/api/embedding-configs/${id}/test`, { method: 'POST' });
+        const result = await resp.json();
+        if (result.success) toast('连接成功！' + result.message + ' (' + result.responseTimeMs + 'ms)', 'success');
+        else toast('连接失败: ' + result.message, 'error', 6000);
+    } catch (e) { toast('测试异常: ' + e.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = orig; }
+}
+
+function escHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+// ========== 初始化 ==========
+document.addEventListener('DOMContentLoaded', () => {
+    // 默认添加一个空项目行
+    addProject();
+    // 初始化 Mermaid
+    try { mermaid.initialize({ theme: 'dark', startOnLoad: false }); } catch (e) {}
+});
+</script>
+</body>
+</html>
