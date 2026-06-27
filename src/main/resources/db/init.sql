@@ -24,3 +24,14 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- ============================================================
 
 -- llm_config、project_config、qa_history、embedding_config 表由 JPA (ddl-auto: update) 自动创建。
+
+-- ============================================================
+-- rag_config 全局 RAG 配置表（切分参数 + 清洗参数）
+-- 由应用启动时 RagConfigService.initializeDefaults() 自动填充默认值
+-- ============================================================
+CREATE TABLE IF NOT EXISTS rag_config (
+    config_key   VARCHAR(100) PRIMARY KEY,
+    config_value TEXT         NOT NULL,
+    description  VARCHAR(255),
+    updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

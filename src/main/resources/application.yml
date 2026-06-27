@@ -11,9 +11,9 @@ spring:
     hibernate:
       ddl-auto: update
     show-sql: false
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+#    properties:
+#      hibernate:
+#        dialect: org.hibernate.dialect.PostgreSQLDialect
 
   # 禁用 Spring AI 自动配置（ChatModel 由 ChatModelBuilder 从数据库配置手动构建）
   autoconfigure:

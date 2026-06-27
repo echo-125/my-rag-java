@@ -38,7 +38,8 @@ public class LangChain4jConfig {
     /** 元数据列定义 */
     private static final List<String> METADATA_COLUMN_DEFS = List.of(
             "project_name TEXT", "file_path TEXT", "language TEXT", "type TEXT",
-            "signature TEXT", "start_line TEXT", "end_line TEXT"
+            "signature TEXT", "start_line TEXT", "end_line TEXT",
+            "chunk_index TEXT", "total_chunks TEXT"
     );
 
     @Bean

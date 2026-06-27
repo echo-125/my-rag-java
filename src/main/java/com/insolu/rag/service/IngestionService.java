@@ -16,6 +16,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 
 /**
  * 离线入库服务：遍历路径、切分文件、向量化、存储。
@@ -27,16 +28,27 @@ public class IngestionService {
     private static final Logger log = LoggerFactory.getLogger(IngestionService.class);
     private static final int BATCH_SIZE = 100;
 
+    // 预编译噪声过滤正则（避免热循环中反复编译）
+    private static final Pattern PAT_UPPER_UNDERSCORE = Pattern.compile("^[A-Z0-9_]+$");
+    private static final Pattern PAT_PURE_DIGITS = Pattern.compile("^\\d+$");
+    private static final Pattern PAT_PURE_URL = Pattern.compile("https?://\\S+");
+    private static final Pattern PAT_PURE_PUNCT = Pattern.compile("^[\\s\\p{Punct}]+$");
+    private static final Pattern PAT_CHINESE_CHAPTER = Pattern.compile(".*第[0-9一二三四五六七八九十]+章.*");
+    private static final Pattern PAT_NUMBERED_SECTION = Pattern.compile(".*[0-9]+\\.[0-9]+\\s+\\S+.*");
+
     private final FileSplitterRouter splitterRouter;
     private final EmbeddingModel embeddingModel;
     private final EmbeddingStore<TextSegment> embeddingStore;
+    private final RagConfigService ragConfigService;
 
     public IngestionService(FileSplitterRouter splitterRouter,
                             EmbeddingModel embeddingModel,
-                            EmbeddingStore<TextSegment> embeddingStore) {
+                            EmbeddingStore<TextSegment> embeddingStore,
+                            RagConfigService ragConfigService) {
         this.splitterRouter = splitterRouter;
         this.embeddingModel = embeddingModel;
         this.embeddingStore = embeddingStore;
+        this.ragConfigService = ragConfigService;
     }
 
     /**
@@ -95,24 +107,39 @@ public class IngestionService {
                             continue;
                         }
 
-                        int stored = embedAndStoreBatched(segments, fileName);
+                        // 清洗过滤：移除无意义的短文本、噪声
+                        List<TextSegment> cleanedSegments = cleanSegments(segments, fileName);
+                        if (cleanedSegments.isEmpty()) {
+                            skipped.incrementAndGet();
+                            sendEvent(emitter, "skip", "跳过（清洗后无有效内容）: " + fileName,
+                                    new ProgressStats(totalFiles, current, success.get(), failed.get(),
+                                            skipped.get(), fileName, pct, eta));
+                            continue;
+                        }
+
+                        // 注入 chunk_index 用于保证检索顺序
+                        injectChunkIndex(cleanedSegments);
+
+                        int stored = embedAndStoreBatched(cleanedSegments, fileName);
                         if (stored == 0) {
                             // 所有 chunk 向量化/存储均失败
                             failed.incrementAndGet();
-                            sendEvent(emitter, "error", fileName + ": 向量化存储全部失败（" + segments.size() + " chunks）",
+                            sendEvent(emitter, "error", fileName + ": 向量化存储全部失败（" + cleanedSegments.size() + " chunks）",
                                     new ProgressStats(totalFiles, current, success.get(), failed.get(),
                                             skipped.get(), fileName, pct, eta));
                         } else {
                             totalChunks.addAndGet(stored);
-                            if (stored < segments.size()) {
+                            int filtered = segments.size() - cleanedSegments.size();
+                            String filterMsg = filtered > 0 ? "，过滤 " + filtered + " 个噪声 chunk" : "";
+                            if (stored < cleanedSegments.size()) {
                                 // 部分失败：标记为警告，但仍算成功
                                 sendEvent(emitter, "success",
-                                        fileName + " (" + stored + "/" + segments.size() + " chunks，部分失败)",
+                                        fileName + " (" + stored + "/" + cleanedSegments.size() + " chunks，部分失败" + filterMsg + ")",
                                         new ProgressStats(totalFiles, current, success.incrementAndGet(), failed.get(),
                                                 skipped.get(), fileName, pct, eta));
                             } else {
                                 success.incrementAndGet();
-                                sendEvent(emitter, "success", fileName + " (" + stored + " chunks)",
+                                sendEvent(emitter, "success", fileName + " (" + stored + " chunks" + filterMsg + ")",
                                         new ProgressStats(totalFiles, current, success.get(), failed.get(),
                                                 skipped.get(), fileName, pct, eta));
                             }
@@ -173,6 +200,158 @@ public class IngestionService {
             }
         }
         return stored;
+    }
+
+    /**
+     * 清洗 segments：移除无意义的短文本、噪声。
+     * 过滤规则：
+     * 1. 超短无意义文本（如页码、水印名 "JH_Gamma"）
+     * 2. 纯大写字母+下划线的水印/字体名
+     * 3. 纯数字（页码）
+     * 4. 目录页（包含大量点状分隔符）
+     * 5. 页眉页脚水印（重复出现的公司名等）
+     */
+    private List<TextSegment> cleanSegments(List<TextSegment> segments, String fileName) {
+        // 从数据库动态读取清洗参数
+        boolean enableNoiseFilter = ragConfigService.getBoolean("enable_noise_filter", true);
+        if (!enableNoiseFilter) {
+            return segments;
+        }
+        int noiseMinLength = ragConfigService.getInt("noise_min_length", 30);
+        boolean filterPureNumbers = ragConfigService.getBoolean("filter_pure_numbers", true);
+
+        List<TextSegment> cleaned = new ArrayList<>();
+        int originalSize = segments.size();
+        int filterShort = 0, filterWatermark = 0, filterDigit = 0, filterTOC = 0, filterHeader = 0;
+
+        for (TextSegment segment : segments) {
+            String text = segment.text().trim();
+
+            // 1. 过滤超短无意义文本（阈值从配置读取）
+            if (text.length() < noiseMinLength) {
+                log.debug("过滤短文本 [{}]: '{}'", fileName, text);
+                filterShort++;
+                continue;
+            }
+
+            // 2. 过滤纯大写字母+下划线+数字的水印/字体名
+            if (PAT_UPPER_UNDERSCORE.matcher(text).matches()) {
+                log.debug("过滤水印/字体名 [{}]: '{}'", fileName, text);
+                filterWatermark++;
+                continue;
+            }
+
+            // 3. 过滤纯数字（页码），仅在 filter_pure_numbers 启用时
+            if (filterPureNumbers && PAT_PURE_DIGITS.matcher(text).matches()) {
+                log.debug("过滤纯数字/页码 [{}]: '{}'", fileName, text);
+                filterDigit++;
+                continue;
+            }
+
+            // 3b. 过滤纯 URL
+            if (PAT_PURE_URL.matcher(text).matches()) {
+                log.debug("过滤纯 URL [{}]: '{}'", fileName, text);
+                filterWatermark++;
+                continue;
+            }
+
+            // 3c. 过滤纯标点符号/空白
+            if (PAT_PURE_PUNCT.matcher(text).matches()) {
+                log.debug("过滤纯标点 [{}]: '{}'", fileName, text);
+                filterWatermark++;
+                continue;
+            }
+
+            // 4. 过滤目录页（包含大量点状分隔符 "......"）
+            if (isTableOfContents(text)) {
+                log.debug("过滤目录页 [{}]: '{}...'", fileName, text.substring(0, Math.min(80, text.length())));
+                filterTOC++;
+                continue;
+            }
+
+            // 5. 过滤页眉页脚水印（短文本中包含重复的公司名/产品名）
+            if (isHeaderFooterWatermark(text)) {
+                log.debug("过滤页眉页脚 [{}]: '{}'", fileName, text.substring(0, Math.min(80, text.length())));
+                filterHeader++;
+                continue;
+            }
+
+            cleaned.add(segment);
+        }
+
+        int filteredCount = originalSize - cleaned.size();
+        if (filteredCount > 0) {
+            log.info("文本清洗 [{}]: {} → {} chunks，过滤 {} 个噪声 (短文本:{}, 水印:{}, 数字:{}, 目录:{}, 页眉:{})",
+                    fileName, originalSize, cleaned.size(), filteredCount,
+                    filterShort, filterWatermark, filterDigit, filterTOC, filterHeader);
+        }
+
+        return cleaned;
+    }
+
+    /**
+     * 判断是否为目录页：包含大量点状分隔符（如 "......6"、"......22"）。
+     * 点号占比超过 50% 才视为目录页；若文本中包含实际章节标题则保留。
+     */
+    private boolean isTableOfContents(String text) {
+        long dotCount = text.chars().filter(c -> c == '.').count();
+        if (dotCount <= text.length() * 0.50) {
+            return false;
+        }
+        // 高点号占比，但包含章节标题格式 → 保留（非纯目录页）
+        if (PAT_CHINESE_CHAPTER.matcher(text).matches()
+                || PAT_NUMBERED_SECTION.matcher(text).matches()) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * 判断是否为页眉页脚水印：短文本中只包含公司名、产品名等重复内容
+     */
+    private boolean isHeaderFooterWatermark(String text) {
+        // 常见的页眉页脚模式
+        String[] watermarkPatterns = {
+            "广州市享印畅链信息技术有限公司",
+            "享印畅链",
+            "版权所有",
+            "机密",
+            "Confidential"
+        };
+
+        // 如果文本很短（< 50 字符）且完全由水印内容组成（降低阈值）
+        if (text.length() < 50) {
+            for (String pattern : watermarkPatterns) {
+                if (text.contains(pattern)) {
+                    // 移除水印内容后，检查是否还有实质内容
+                    String cleaned = text.replace(pattern, "").trim();
+                    // 如果移除水印后剩余内容很少，说明是纯水印
+                    if (cleaned.length() < 10) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 为 segments 注入 chunk_index 和 total_chunks，用于保证检索时的文档逻辑顺序。
+     * 将自增索引写入 Metadata 的 chunk_index 字段。
+     * 注意：此方法会就地修改传入列表中的元素（替换 TextSegment），调用方需确保列表可变。
+     */
+    private void injectChunkIndex(List<TextSegment> segments) {
+        int total = segments.size();
+        for (int i = 0; i < total; i++) {
+            TextSegment segment = segments.get(i);
+            var meta = new dev.langchain4j.data.document.Metadata(segment.metadata().toMap());
+            meta.put("start_line", String.valueOf(i + 1));
+            meta.put("end_line", String.valueOf(i + 1));
+            meta.put("chunk_index", String.valueOf(i));
+            meta.put("total_chunks", String.valueOf(total));
+            segments.set(i, TextSegment.from(segment.text(), meta));
+        }
     }
 
     /** 递归收集支持的文件 */

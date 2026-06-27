@@ -13,7 +13,7 @@ public class InsoluRagApplication {
 
     @Bean
     public CacheManager cacheManager() {
-        return new ConcurrentMapCacheManager("activeLlmConfig", "activeEmbeddingConfig");
+        return new ConcurrentMapCacheManager("activeLlmConfig", "activeEmbeddingConfig", "ragConfigCache");
     }
 
     public static void main(String[] args) {

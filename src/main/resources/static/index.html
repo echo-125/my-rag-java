@@ -301,6 +301,20 @@
 
     <!-- ==================== 设置 ==================== -->
     <div id="tab-settings" class="tab-panel hidden">
+        <!-- ===== RAG 切分与清洗配置 ===== -->
+        <div class="card" style="margin-bottom: 16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                <h2 class="card-title" style="margin-bottom:0;">RAG 切分与清洗配置</h2>
+                <button class="btn btn-primary" onclick="saveRagConfigs(this)">保存配置</button>
+            </div>
+            <div id="ragConfigWarning" style="background:rgba(234,179,8,0.1); border:1px solid rgba(234,179,8,0.3); border-radius:8px; padding:12px 16px; margin-bottom:20px; font-size:0.8125rem; color:#eab308;">
+                ⚠️ 注意：修改配置后，需重新进行文档入库才会对新切分的 chunk 生效。已存在数据库中的旧 chunk 不会改变。
+            </div>
+            <div id="ragConfigForm">
+                <div style="text-align:center; color:var(--text-muted); padding:24px 0;">加载中...</div>
+            </div>
+        </div>
+
         <div class="card">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
                 <h2 class="card-title" style="margin-bottom:0;">LLM API 配置管理</h2>
@@ -544,7 +558,7 @@ function switchTab(tabName) {
 
     if (tabName === 'dashboard') refreshDashboard();
     if (tabName === 'chat') loadModelList();
-    if (tabName === 'settings') { loadLlmConfigs(); loadEmbedConfigs(); }
+    if (tabName === 'settings') { loadRagConfigs(); loadLlmConfigs(); loadEmbedConfigs(); }
 }
 
 // ========== 配置入库：动态项目 ==========
@@ -1215,6 +1229,72 @@ async function testEmbedConfig(id, btnEl) {
         }
         else toast('连接失败: ' + result.message, 'error', 6000);
     } catch (e) { toast('测试异常: ' + e.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = orig; }
+}
+
+// ========== RAG 切分与清洗配置 ==========
+async function loadRagConfigs() {
+    const form = document.getElementById('ragConfigForm');
+    try {
+        const resp = await fetch('/api/configs');
+        if (!resp.ok) { form.innerHTML = '<div style="color:var(--error);padding:12px 0;">加载失败</div>'; return; }
+        const configs = await resp.json();
+        if (configs.length === 0) { form.innerHTML = '<div style="color:var(--text-muted);padding:12px 0;">暂无配置项</div>'; return; }
+
+        form.innerHTML = configs.map(c => {
+            const id = 'rag_' + c.key;
+            let input;
+            if (c.type === 'boolean') {
+                input = `<select id="${id}" class="select-field" style="width:140px;">
+                    <option value="true" ${c.value === 'true' ? 'selected' : ''}>开启</option>
+                    <option value="false" ${c.value === 'false' ? 'selected' : ''}>关闭</option>
+                </select>`;
+            } else if (c.type === 'number') {
+                const step = c.value.includes('.') ? '0.01' : '1';
+                input = `<input id="${id}" type="number" class="input-field" style="width:180px;" value="${escHtml(c.value)}" step="${step}" min="0.01">`;
+            } else {
+                input = `<input id="${id}" type="text" class="input-field" style="width:180px;" value="${escHtml(c.value)}">`;
+            }
+            return `<div style="display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);">
+                <div>
+                    <div style="font-size:0.875rem; font-weight:500;">${escHtml(c.key)}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">${escHtml(c.description || '')}</div>
+                </div>
+                ${input}
+            </div>`;
+        }).join('');
+    } catch (e) {
+        form.innerHTML = '<div style="color:var(--error);padding:12px 0;">加载失败: ' + escHtml(e.message) + '</div>';
+    }
+}
+
+async function saveRagConfigs(btnEl) {
+    const btn = btnEl || event.target;
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+    try {
+        const resp0 = await fetch('/api/configs');
+        if (!resp0.ok) { toast('获取配置失败', 'error'); return; }
+        const configs = await resp0.json();
+        const updates = {};
+        for (const c of configs) {
+            const el = document.getElementById('rag_' + c.key);
+            if (el) updates[c.key] = el.value;
+        }
+        const resp = await fetch('/api/configs', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates)
+        });
+        if (resp.ok) {
+            const result = await resp.json();
+            toast('保存成功，已更新 ' + result.updated + ' 项配置', 'success');
+            loadRagConfigs();
+        } else {
+            toast('保存失败: ' + resp.status, 'error');
+        }
+    } catch (e) { toast('请求失败: ' + e.message, 'error'); }
     finally { btn.disabled = false; btn.textContent = orig; }
 }
 
