@@ -170,5 +170,20 @@ public class LangChain4jConfig {
         public Response<List<Embedding>> embedAll(List<TextSegment> textSegments) {
             return getDelegate().embedAll(textSegments);
         }
+
+        @Override
+        public int dimension() {
+            // 从数据库配置读取维度，避免调用默认实现触发无意义的 API 调用
+            return configService.findActive()
+                    .map(EmbeddingConfigEntity::getDimension)
+                    .orElse(0);
+        }
+
+        @Override
+        public String modelName() {
+            return configService.findActive()
+                    .map(EmbeddingConfigEntity::getModelName)
+                    .orElse("unknown");
+        }
     }
 }

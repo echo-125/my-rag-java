@@ -45,7 +45,7 @@ public class LlmConfigService {
     @Transactional(readOnly = true)
     @Cacheable(value = "activeLlmConfig", key = "'current'")
     public Optional<LlmConfigEntity> findActiveRaw() {
-        return repository.findFirstByIsActiveTrue();
+        return repository.findFirstByIsActiveTrueOrderByUpdatedAtDesc();
     }
 
     /** 按 ID 获取（密钥脱敏） */
@@ -153,7 +153,7 @@ public class LlmConfigService {
                 var chatClient = org.springframework.ai.chat.client.ChatClient.create(chatModel);
                 var streamFlux = chatClient.prompt().user("Say hi").stream().content();
                 // 尝试获取第一个 token
-                String first = streamFlux.blockFirst();
+                String first = streamFlux.blockFirst(java.time.Duration.ofSeconds(30));
                 streaming = first != null;
                 if (streaming) log.info("流式测试通过");
             } catch (Exception se) {

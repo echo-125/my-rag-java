@@ -76,6 +76,7 @@ public class EmbeddingConfigService {
         EmbeddingConfigEntity saved = repository.save(entity);
 
         // 切换 Embedding 模型后，用新维度重建向量表（旧数据与新模型不兼容）
+        // 注意：DDL 执行期间有极短窗口期，并发检索请求可能报错（本地单用户系统可接受）
         recreateDocumentChunksTable(saved.getDimension());
 
         return saved;
@@ -86,6 +87,9 @@ public class EmbeddingConfigService {
      * 切换 Embedding 模型时，向量维度可能不同，旧数据无法复用，需要重建。
      */
     private void recreateDocumentChunksTable(int dimension) {
+        if (dimension <= 0 || dimension > 65536) {
+            throw new IllegalArgumentException("无效的向量维度: " + dimension + "（必须在 1-65536 之间）");
+        }
         log.info("重建 document_chunks 表，新维度: {}", dimension);
         jdbcTemplate.execute("DROP TABLE IF EXISTS document_chunks");
         // 表结构与 PgVectorEmbeddingStore.createTable=true 生成的一致

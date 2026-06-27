@@ -4,6 +4,7 @@ import com.insolu.rag.entity.LlmConfigEntity;
 import com.insolu.rag.entity.LlmConfigEntity.ApiFormat;
 import com.insolu.rag.service.LlmConfigService;
 import com.insolu.rag.service.LlmConfigService.TestResult;
+import com.insolu.rag.service.RagChatService;
 import com.insolu.rag.service.SpringAiModelRouterService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,10 +18,13 @@ public class LlmConfigController {
 
     private final LlmConfigService service;
     private final SpringAiModelRouterService router;
+    private final RagChatService ragChatService;
 
-    public LlmConfigController(LlmConfigService service, SpringAiModelRouterService router) {
+    public LlmConfigController(LlmConfigService service, SpringAiModelRouterService router,
+                               RagChatService ragChatService) {
         this.service = service;
         this.router = router;
+        this.ragChatService = ragChatService;
     }
 
     @GetMapping
@@ -91,7 +95,11 @@ public class LlmConfigController {
     @PostMapping("/{id}/test")
     public ResponseEntity<TestResult> test(@PathVariable UUID id) {
         try {
-            return ResponseEntity.ok(service.testConnection(id));
+            TestResult result = service.testConnection(id);
+            // 测试成功后清除流式缓存，使新的 supportsStreaming 标记生效
+            ragChatService.evictStreamingCache(id);
+            router.evictCache(id);
+            return ResponseEntity.ok(result);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
         }

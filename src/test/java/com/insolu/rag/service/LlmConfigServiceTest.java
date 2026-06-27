@@ -102,14 +102,14 @@ class LlmConfigServiceTest {
     }
 
     @Test
-    @DisplayName("activate 先停用所有再激活指定配置")
-    void activate_deactivatesAllThenActivates() {
+    @DisplayName("activate 直接激活指定配置（允许多个同时激活）")
+    void activate_activatesWithoutDeactivatingOthers() {
         when(repository.findById(sampleEntity.getId())).thenReturn(Optional.of(sampleEntity));
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.activate(sampleEntity.getId());
 
-        verify(repository).deactivateAll();
+        verify(repository, never()).deactivateAll();
         verify(repository).save(argThat(e -> e.getIsActive()));
     }
 

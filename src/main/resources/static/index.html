@@ -966,7 +966,7 @@ async function loadLlmConfigs() {
                 </td>
                 <td style="padding:10px 12px;">
                     <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                        <button class="btn btn-secondary btn-sm" onclick="testLlmConfig('${c.id}')" title="测试连接">测试</button>
+                        <button class="btn btn-secondary btn-sm" onclick="testLlmConfig('${c.id}', this)" title="测试连接">测试</button>
                         ${c.isActive
                             ? `<button class="btn btn-secondary btn-sm" onclick="deactivateLlmConfig('${c.id}')" title="停用">停用</button>`
                             : `<button class="btn btn-primary btn-sm" onclick="activateLlmConfig('${c.id}')" title="激活">激活</button>`}
@@ -1057,8 +1057,8 @@ async function deactivateLlmConfig(id) {
     } catch (e) { toast('停用失败', 'error'); }
 }
 
-async function testLlmConfig(id) {
-    const btn = event.target;
+async function testLlmConfig(id, btnEl) {
+    const btn = btnEl || event.target;
     const origText = btn.textContent;
     btn.disabled = true;
     btn.textContent = '测试中...';
@@ -1112,7 +1112,7 @@ async function loadEmbedConfigs() {
                 <td style="padding:10px 12px;">${c.isActive ? '<span style="color:var(--success); font-weight:500;">● 已激活</span>' : '<span style="color:var(--text-muted);">○ 未激活</span>'}</td>
                 <td style="padding:10px 12px;">
                     <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                        <button class="btn btn-secondary btn-sm" onclick="testEmbedConfig('${c.id}')">测试</button>
+                        <button class="btn btn-secondary btn-sm" onclick="testEmbedConfig('${c.id}', this)">测试</button>
                         ${c.isActive
                             ? `<button class="btn btn-secondary btn-sm" onclick="deactivateEmbedConfig('${c.id}')">停用</button>`
                             : `<button class="btn btn-primary btn-sm" onclick="activateEmbedConfig('${c.id}')">激活</button>`}
@@ -1199,15 +1199,17 @@ async function deactivateEmbedConfig(id) {
     catch (e) { toast('停用失败', 'error'); }
 }
 
-async function testEmbedConfig(id) {
-    const btn = event.target; const orig = btn.textContent; btn.disabled = true; btn.textContent = '测试中...';
+async function testEmbedConfig(id, btnEl) {
+    const btn = btnEl || event.target; const orig = btn.textContent; btn.disabled = true; btn.textContent = '测试中...';
     try {
         const resp = await fetch(`/api/embedding-configs/${id}/test`, { method: 'POST' });
         const result = await resp.json();
         if (result.success) {
             toast('连接成功！' + result.message + ' (' + result.responseTimeMs + 'ms)', 'success');
-            // 自动回填检测到的维度
-            if (result.dimension > 0) {
+            // 仅当编辑弹窗打开且显示的是当前配置时，才自动回填维度
+            const embedModal = document.getElementById('embedModal');
+            const editingId = document.getElementById('embedId').value;
+            if (!embedModal.classList.contains('hidden') && editingId === id && result.dimension > 0) {
                 document.getElementById('embedDimension').value = result.dimension;
             }
         }

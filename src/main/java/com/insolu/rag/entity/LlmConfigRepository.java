@@ -15,7 +15,7 @@ public interface LlmConfigRepository extends JpaRepository<LlmConfigEntity, UUID
 
     List<LlmConfigEntity> findByIsActiveTrue();
 
-    Optional<LlmConfigEntity> findFirstByIsActiveTrue();
+    Optional<LlmConfigEntity> findFirstByIsActiveTrueOrderByUpdatedAtDesc();
 
     boolean existsByName(String name);
 

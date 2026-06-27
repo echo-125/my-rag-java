@@ -13,7 +13,9 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -35,6 +37,8 @@ public class RagChatService {
 
     /** 缓存 Retriever 实例，避免每次查询重建 */
     private volatile EmbeddingStoreContentRetriever cachedRetriever;
+    /** 缓存各模型的流式支持标记，避免每次聊天查 DB */
+    private final Map<UUID, Boolean> streamingCache = new ConcurrentHashMap<>();
 
     public RagChatService(EmbeddingStore<TextSegment> embeddingStore,
                           EmbeddingModel embeddingModel,
@@ -66,6 +70,11 @@ public class RagChatService {
         return cachedRetriever;
     }
 
+    /** 清除流式支持缓存（测试连接后调用） */
+    public void evictStreamingCache(UUID configId) {
+        streamingCache.remove(configId);
+    }
+
     /**
      * 执行 RAG 问答：检索相关文档 → 组装 Prompt → 流式生成。
      */
@@ -92,12 +101,21 @@ public class RagChatService {
                 + "=== 内容结束 ===";
 
         // 3. 根据 supportsStreaming 标记精确选择调用方式
-        UUID configId = UUID.fromString(modelKey);
+        if (modelKey == null || modelKey.isBlank()) {
+            throw new IllegalArgumentException("请选择一个 LLM 模型");
+        }
+        UUID configId;
+        try {
+            configId = UUID.fromString(modelKey);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("无效的模型 ID: " + modelKey);
+        }
         ChatClient chatClient = modelRouter.getChatClient(configId);
 
-        boolean streaming = llmConfigService.findRawById(configId)
-                .map(e -> Boolean.TRUE.equals(e.getSupportsStreaming()))
-                .orElse(false);
+        boolean streaming = streamingCache.computeIfAbsent(configId,
+                id -> llmConfigService.findRawById(id)
+                        .map(e -> Boolean.TRUE.equals(e.getSupportsStreaming()))
+                        .orElse(false));
 
         if (streaming) {
             log.debug("使用流式对话");
