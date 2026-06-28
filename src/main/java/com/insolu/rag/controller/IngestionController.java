@@ -27,8 +27,8 @@ public class IngestionController {
      */
     @PostMapping(value = "/start", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter startIngestion(@RequestBody IngestionRequest request) {
-        // SSE 超时 10 分钟（大项目入库可能耗时较长）
-        SseEmitter emitter = new SseEmitter(10 * 60 * 1000L);
+        // SSE 超时 30 分钟（大项目入库可能耗时较长）
+        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
         ingestionService.ingest(request.paths(), request.projectName(), emitter);
         return emitter;
     }

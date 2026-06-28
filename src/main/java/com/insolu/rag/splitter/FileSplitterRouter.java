@@ -42,13 +42,32 @@ public class FileSplitterRouter {
         String filePath = file.toString();
         byte[] bytes = Files.readAllBytes(file);
 
-        // 统一使用 Tika 读取文本内容
+        // ─── Excel/PPT 使用 POI 结构化解析（替代 Tika 扁平化提取） ───
         String content;
-        try {
-            content = TIKA.parseToString(new ByteArrayInputStream(bytes));
-        } catch (Exception e) {
-            log.warn("Tika 解析失败，跳过: {} - {}", file.getFileName(), e.getMessage());
-            return List.of();
+        if ("xlsx".equals(extension)) {
+            ExcelStructuredParser excelParser = new ExcelStructuredParser();
+            List<String> markdownChunks = excelParser.parse(bytes, fileName);
+            if (markdownChunks.isEmpty()) {
+                log.warn("Excel 结构化解析结果为空，跳过: {}", file.getFileName());
+                return List.of();
+            }
+            content = String.join("\n\n---\n\n", markdownChunks);
+        } else if ("pptx".equals(extension)) {
+            PptxStructuredParser pptParser = new PptxStructuredParser();
+            List<String> slideMarkdowns = pptParser.parse(bytes, fileName);
+            if (slideMarkdowns.isEmpty()) {
+                log.warn("PPT 结构化解析结果为空，跳过: {}", file.getFileName());
+                return List.of();
+            }
+            content = String.join("\n\n---\n\n", slideMarkdowns);
+        } else {
+            // 其他文件类型统一使用 Tika 读取文本内容
+            try {
+                content = TIKA.parseToString(new ByteArrayInputStream(bytes));
+            } catch (Exception e) {
+                log.warn("Tika 解析失败，跳过: {} - {}", file.getFileName(), e.getMessage());
+                return List.of();
+            }
         }
 
         if (content == null || content.isBlank()) {
@@ -66,17 +85,25 @@ public class FileSplitterRouter {
 
         segments = switch (extension) {
             case "java" -> new JavaAstDocumentSplitter(projectName, filePath).split(doc);
+            case "cs" -> new CSharpSplitter(projectName, filePath, "csharp").split(doc);
             case "js", "jsx", "ts", "tsx", "mjs", "cjs" -> {
                 String lang = extension.startsWith("ts") ? "typescript" : "javascript";
                 yield new RegexSplitter(projectName, filePath, lang).split(doc);
             }
             case "py" -> new RegexSplitter(projectName, filePath, "python").split(doc);
             case "go" -> new RegexSplitter(projectName, filePath, "go").split(doc);
-            case "md", "txt", "csv", "json", "xml", "yaml", "yml",
+            case "vue" -> new VueSplitter(projectName, filePath, "vue").split(doc);
+            case "qml" -> new QmlSplitter(projectName, filePath, "qml").split(doc);
+            case "html", "htm" -> new HtmlSplitter(projectName, filePath, "html").split(doc);
+            case "css", "scss" -> new CssSplitter(projectName, filePath, extension).split(doc);
+            case "md" -> splitDocumentWithSemantics(doc, projectName, filePath, "markdown");
+            case "xlsx", "pptx" ->
+                    splitDocumentWithSemantics(doc, projectName, filePath, "document");
+            case "txt", "csv", "json", "xml", "yaml", "yml",
                  "properties", "sql", "sh", "bat", "cmd", "gradle" ->
                     splitAndInjectMetadata(doc, projectName, filePath, "text");
             case "pdf", "doc", "docx" ->
-                    splitDocumentWithSemantics(doc, projectName, filePath);
+                    splitDocumentWithSemantics(doc, projectName, filePath, "document");
             default -> splitAndInjectMetadata(doc, projectName, filePath, "text");
         };
 
@@ -144,11 +171,14 @@ public class FileSplitterRouter {
     }
 
     /**
-     * 使用 SemanticStructureSplitter 处理 PDF/Word 文档。
+     * 使用 SemanticStructureSplitter 处理 PDF/Word/Markdown 文档。
      * 所有切分参数从 RagConfigService 动态读取。
      * 如果 EmbeddingModel 不可用（未激活配置），自动降级为递归切分器。
+     *
+     * @param type 文档类型，用于元数据注入（如 "document"、"markdown"）
      */
-    private List<TextSegment> splitDocumentWithSemantics(Document doc, String projectName, String filePath) {
+    private List<TextSegment> splitDocumentWithSemantics(Document doc, String projectName,
+                                                          String filePath, String type) {
         try {
             double threshold  = ragConfigService.getDouble("semantic_threshold", 0.65);
             int triggerSize   = ragConfigService.getInt("max_segment_size", 1000) + 200;
@@ -175,7 +205,7 @@ public class FileSplitterRouter {
                             meta.put("project_name", projectName);
                             meta.put("file_path", filePath);
                             meta.put("language", detectLanguage(filePath));
-                            meta.put("type", "document");
+                            meta.put("type", type);
                             return TextSegment.from(seg.text(), meta);
                         })
                         .toList();
@@ -188,7 +218,7 @@ public class FileSplitterRouter {
 
         // 降级：使用标准递归切分器
         log.info("使用递归切分器处理: {}", filePath);
-        return splitAndInjectMetadata(doc, projectName, filePath, "document");
+        return splitAndInjectMetadata(doc, projectName, filePath, type);
     }
 
     /**
@@ -222,10 +252,16 @@ public class FileSplitterRouter {
     private String detectLanguage(String filePath) {
         String lower = filePath.toLowerCase(Locale.ROOT);
         if (lower.endsWith(".java")) return "java";
+        if (lower.endsWith(".cs")) return "csharp";
         if (lower.endsWith(".py")) return "python";
         if (lower.endsWith(".go")) return "go";
         if (lower.endsWith(".js") || lower.endsWith(".jsx") || lower.endsWith(".mjs")) return "javascript";
         if (lower.endsWith(".ts") || lower.endsWith(".tsx")) return "typescript";
+        if (lower.endsWith(".vue")) return "vue";
+        if (lower.endsWith(".qml")) return "qml";
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
+        if (lower.endsWith(".css")) return "css";
+        if (lower.endsWith(".scss")) return "scss";
         if (lower.endsWith(".md")) return "markdown";
         if (lower.endsWith(".xml")) return "xml";
         if (lower.endsWith(".json")) return "json";
@@ -235,13 +271,89 @@ public class FileSplitterRouter {
         return "text";
     }
 
+    /** 产物包/二进制/媒体文件扩展名（始终排除） */
+    private static final java.util.Set<String> EXCLUDED_EXTENSIONS = java.util.Set.of(
+            // 压缩包
+            "zip", "rar", "tar", "gz", "7z", "bz2", "xz", "cab",
+            // 二进制库/可执行文件
+            "jar", "war", "ear", "xjar", "dll", "exe", "so", "dylib", "msi", "cpl",
+            // 编译产物
+            "class", "obj", "o", "a", "lib", "pdb",
+            // 媒体文件
+            "mp3", "mp4", "avi", "mov", "mkv", "wmv", "flv",
+            // 图片
+            "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico", "webp",
+            // 字体
+            "ttf", "otf", "woff", "woff2", "eot",
+            // 日志/临时文件
+            "log", "tmp", "temp", "swp", "swo", "bak", "orig",
+            // Python 缓存
+            "pyc", "pyo",
+            // source maps
+            "map", "ts.map", "js.map", "css.map",
+            // IDE 配置
+            "iml",
+            // 其他不可读取/无意义格式
+            "pf", "jfc", "ps", "pcl", "xps", "psd", "access", "bfc", "dat", "data",
+            "cfg", "src", "lic", "policy", "jsa", "template"
+    );
+
+    /** 构建产物/IDE/日志目录关键词（路径包含任一关键词则跳过） */
+    private static final java.util.Set<String> EXCLUDED_PATH_KEYWORDS = java.util.Set.of(
+            // Java 构建产物
+            "target/", "BOOT-INF/",
+            // .NET 构建产物
+            "bin/", "obj/", "packages/",
+            // 前端构建产物
+            "node_modules/", "dist/", "build/", "unpackage/", ".next/", ".nuxt/",
+            // IDE 配置
+            ".idea/", ".vscode/", ".settings/",
+            // VCS
+            ".git/", ".svn/", ".hg/",
+            // 日志
+            "logs/",
+            // Python 缓存
+            "__pycache__/", ".mypy_cache/",
+            // Gradle 缓存
+            ".gradle/"
+    );
+
+    /**
+     * 需在递归扫描时跳过的目录名（无尾部斜杠，用于 {@code preVisitDirectory} 匹配）。
+     * 由 {@link com.insolu.rag.service.IngestionService} 引用，保持过滤规则一致。
+     */
+    public static final java.util.Set<String> SKIP_DIR_NAMES = java.util.Set.of(
+            "node_modules", ".git", ".svn", ".hg",
+            "target", "build", "dist", "bin", "obj", "packages",
+            ".idea", ".vscode", ".settings",
+            "logs", "unpackage", ".next", ".nuxt",
+            "__pycache__", ".mypy_cache", ".gradle",
+            "BOOT-INF", "out"
+    );
+
     public boolean isSupported(String fileName) {
-        String ext = getExtension(fileName.toLowerCase(Locale.ROOT));
+        String lower = fileName.toLowerCase(Locale.ROOT);
+        String ext = getExtension(lower);
+
+        // 1. 排除产物包和二进制文件（按扩展名）
+        if (EXCLUDED_EXTENSIONS.contains(ext)) return false;
+
+        // 2. 排除构建目录/IDE/VCS/日志中的文件（按路径关键词）
+        for (String keyword : EXCLUDED_PATH_KEYWORDS) {
+            if (lower.contains(keyword)) return false;
+        }
+
+        // 3. 白名单检查
         return switch (ext) {
-            case "java", "js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "go",
-                 "md", "txt", "csv", "json", "xml", "yaml", "yml",
-                 "properties", "sql", "sh", "bat", "cmd", "gradle",
-                 "pdf", "doc", "docx" -> true;
+            // 代码文件
+            case "java", "cs", "js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "go",
+                 "vue", "qml", "html", "htm", "css", "scss",
+            // 文档文件
+                 "md", "txt", "pdf", "doc", "docx", "pptx", "xlsx", "url",
+            // 配置/数据文件
+                 "csv", "json", "xml", "yaml", "yml", "properties", "conf",
+            // 脚本文件
+                 "sql", "sh", "bat", "cmd", "gradle" -> true;
             default -> false;
         };
     }

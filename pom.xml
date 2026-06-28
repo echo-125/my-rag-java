@@ -13,7 +13,7 @@
 
     <groupId>com.insolu</groupId>
     <artifactId>insolu-rag-java</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.0.1</version>
     <name>insolu-rag-java</name>
     <description>个人知识库与代码库 RAG 系统（LangChain4j + Spring AI 双框架）</description>
 
@@ -116,6 +116,13 @@
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-parsers-standard-package</artifactId>
             <version>3.3.1</version>
+        </dependency>
+
+        <!-- Apache POI（Excel/PPT 结构化解析，替代 Tika 的扁平化提取） -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.2.5</version>
         </dependency>
 
         <!-- 测试 -->

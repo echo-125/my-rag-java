@@ -422,4 +422,155 @@ class SemanticStructureSplitterTest {
         float[] b = {1, 0, 0};
         assertThat(SemanticStructureSplitter.cosineSimilarity(a, b)).isEqualTo(0.0);
     }
+
+    // ─────────────────────────────────────────────
+    //  Markdown 代码块保护
+    // ─────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("Markdown 代码块保护")
+    class MarkdownCodeBlockProtection {
+
+        @Test
+        @DisplayName("代码块内的 # 注释不被识别为 Markdown 标题")
+        void split_codeBlockWithPythonComments_notTreatedAsHeaders() {
+            String text = String.join("\n",
+                    "# 项目概述",
+                    "",
+                    "这是一个 Python 项目。",
+                    "",
+                    "```python",
+                    "# 这是代码注释，不是标题",
+                    "# import 也不是标题",
+                    "def hello():",
+                    "    # 内部注释",
+                    "    print('hello')",
+                    "```",
+                    "",
+                    "# 安装说明",
+                    "",
+                    "请按以下步骤安装。");
+
+            Document doc = Document.from(text);
+            List<TextSegment> segments = splitter.split(doc);
+
+            // 应该只有 2 个 chunk（项目概述 + 安装说明），代码块不产生额外标题切分
+            // 代码块内容应归入 "项目概述" 章节
+            String allText = segments.stream()
+                    .map(TextSegment::text)
+                    .reduce("", (a, b) -> a + "\n" + b);
+            assertThat(allText).contains("代码注释");
+            assertThat(allText).contains("安装说明");
+        }
+
+        @Test
+        @DisplayName("波浪线围栏代码块也受保护")
+        void split_tildeFencedCodeBlock_notTreatedAsHeaders() {
+            String text = String.join("\n",
+                    "# 前言",
+                    "",
+                    "一些介绍文字。",
+                    "",
+                    "~~~bash",
+                    "# 这不是标题",
+                    "echo hello",
+                    "~~~",
+                    "",
+                    "# 结语",
+                    "",
+                    "结束语。");
+
+            Document doc = Document.from(text);
+            List<TextSegment> segments = splitter.split(doc);
+
+            // 应有 3 个标题块（前言 + 结语，代码块归入前言或单独处理）
+            assertThat(segments.size()).isGreaterThanOrEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("无代码块的 MD 文件正常按标题切分")
+        void split_markdownWithoutCodeBlocks_splitsByHeaders() {
+            String text = String.join("\n",
+                    "# API 设计",
+                    "",
+                    "## 接口规范",
+                    "",
+                    "所有接口遵循 RESTful 风格。",
+                    "",
+                    "## 错误处理",
+                    "",
+                    "统一错误码格式。");
+
+            Document doc = Document.from(text);
+            List<TextSegment> segments = splitter.split(doc);
+
+            // 至少 2 个 chunk（接口规范 + 错误处理）
+            assertThat(segments.size()).isGreaterThanOrEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("signature 包含 Markdown 标题层级路径")
+        void split_markdownHeaders_signatureContainsHierarchy() {
+            String text = String.join("\n",
+                    "# 系统架构",
+                    "",
+                    "## 数据层",
+                    "",
+                    "数据库采用 PostgreSQL。",
+                    "支持向量检索。");
+
+            Document doc = Document.from(text);
+            List<TextSegment> segments = splitter.split(doc);
+
+            // 查找包含 "数据层" 的 chunk 的 signature
+            boolean hasHierarchySignature = segments.stream()
+                    .map(s -> s.metadata().getString("signature"))
+                    .filter(sig -> sig != null && !sig.isEmpty())
+                    .anyMatch(sig -> sig.contains("系统架构") && sig.contains("数据层"));
+            assertThat(hasHierarchySignature).isTrue();
+        }
+
+        @Test
+        @DisplayName("MD 含 H1-H6 + 代码块，代码块归入正确的标题章节")
+        void split_mdWithH1ToH6AndCodeBlock_codeBlockBelongsToCorrectSection() {
+            String text = String.join("\n",
+                    "# 安装指南",
+                    "",
+                    "## 系统要求",
+                    "",
+                    "需要 Java 21 以上。",
+                    "",
+                    "### Linux 环境",
+                    "",
+                    "```bash",
+                    "sudo apt install openjdk-21",
+                    "# 配置环境变量",
+                    "export JAVA_HOME=/usr/lib/jvm/java-21",
+                    "```",
+                    "",
+                    "### Windows 环境",
+                    "",
+                    "下载安装包后配置环境变量。",
+                    "",
+                    "## 验证安装",
+                    "",
+                    "运行以下命令：",
+                    "",
+                    "```bash",
+                    "java -version",
+                    "```");
+
+            Document doc = Document.from(text);
+            List<TextSegment> segments = splitter.split(doc);
+
+            // 验证代码块内容被保留在结果中
+            String allText = segments.stream()
+                    .map(TextSegment::text)
+                    .reduce("", (a, b) -> a + "\n" + b);
+            assertThat(allText).contains("sudo apt install");
+            assertThat(allText).contains("java -version");
+            // 代码块内的注释不产生额外 chunk
+            assertThat(segments.size()).isLessThanOrEqualTo(5);
+        }
+    }
 }

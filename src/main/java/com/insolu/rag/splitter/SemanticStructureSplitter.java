@@ -8,6 +8,7 @@ import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.output.Response;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,6 +91,19 @@ public class SemanticStructureSplitter implements DocumentSplitter {
     private record HeaderPattern(Pattern pattern, int level, String markdownPrefix) {
         boolean matches(String line) {
             return pattern.matcher(line).matches();
+        }
+
+        /**
+         * 返回指定行的实际层级。
+         * 对 Markdown 标题（# ## ### 等）根据 # 数量动态计算，其余使用静态 level。
+         */
+        int levelFor(String line) {
+            if (!line.startsWith("#")) return level;
+            int count = 0;
+            for (int i = 0; i < line.length() && line.charAt(i) == '#'; i++) {
+                count++;
+            }
+            return (count >= 1 && count <= 6) ? count : level;
         }
     }
 
@@ -193,19 +207,44 @@ public class SemanticStructureSplitter implements DocumentSplitter {
     /**
      * 按标题层级将文档拆分为章节块。
      * 每个块记录其标题、内容、以及所有祖先标题。
+     * <p>
+     * 对 Markdown 文件会自动识别代码块围栏（``` 或 ~~~），避免将代码块内的
+     * 注释（如 Python 的 # comment）误判为 Markdown 标题。
      */
     private List<HeaderBlock> splitByHeaders(String text) {
         String[] lines = text.split("\n", -1);
 
         // 识别所有标题行
         List<Header> headers = new ArrayList<>();
+        boolean inCodeBlock = false;  // 代码块围栏状态
+        String fenceMarker = "";     // 当前围栏标记（``` 或 ~~~），用于精确匹配闭合
+
         for (int i = 0; i < lines.length; i++) {
             String trimmed = lines[i].trim();
-            if (trimmed.isEmpty()) continue;
+
+            // 检测代码块围栏（``` 或 ~~~），仅匹配同类型围栏的闭合
+            if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+                String marker = trimmed.startsWith("```") ? "```" : "~~~";
+                if (!inCodeBlock) {
+                    // 进入代码块
+                    inCodeBlock = true;
+                    fenceMarker = marker;
+                } else if (marker.equals(fenceMarker)) {
+                    // 同类型围栏闭合
+                    inCodeBlock = false;
+                    fenceMarker = "";
+                }
+                // 不同类型围栏不切换状态（可能是嵌套的 Markdown 示例）
+                continue;
+            }
+
+            // 代码块内或空行：跳过标题匹配
+            if (inCodeBlock || trimmed.isEmpty()) continue;
 
             for (HeaderPattern hp : HEADER_PATTERNS) {
                 if (hp.matches(trimmed)) {
-                    headers.add(new Header(hp.level(), trimmed, i));
+                    int actualLevel = hp.levelFor(trimmed);
+                    headers.add(new Header(actualLevel, trimmed, i));
                     break; // 优先匹配第一个（层级最高的模式）
                 }
             }
@@ -369,12 +408,19 @@ public class SemanticStructureSplitter implements DocumentSplitter {
         }
 
         // 按转变点拆分为语义 chunk
+        List<SemanticChunk> rawChunks = getSemanticChunks(contextPrefix, splitPoints, paraList);
+
+        // 合并过小的 chunk（< 500 字符），避免碎片化
+        return mergeSmallChunks(rawChunks, prefixLen);
+    }
+
+    private static @NonNull List<SemanticChunk> getSemanticChunks(String contextPrefix, List<Integer> splitPoints, List<String> paraList) {
         List<SemanticChunk> rawChunks = new ArrayList<>();
         int prevSplit = 0;
         for (int sp : splitPoints) {
             StringBuilder sb = new StringBuilder();
             for (int j = prevSplit; j < sp; j++) {
-                if (sb.length() > 0) sb.append("\n\n");
+                if (!sb.isEmpty()) sb.append("\n\n");
                 sb.append(paraList.get(j));
             }
             rawChunks.add(new SemanticChunk(sb.toString(), contextPrefix));
@@ -387,9 +433,7 @@ public class SemanticStructureSplitter implements DocumentSplitter {
             last.append(paraList.get(j));
         }
         rawChunks.add(new SemanticChunk(last.toString(), contextPrefix));
-
-        // 合并过小的 chunk（< 500 字符），避免碎片化
-        return mergeSmallChunks(rawChunks, prefixLen);
+        return rawChunks;
     }
 
     /**
