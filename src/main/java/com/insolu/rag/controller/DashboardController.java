@@ -60,6 +60,7 @@ public class DashboardController {
                             : qa.getAnswer());
                     m.put("modelName", qa.getModelName());
                     m.put("createdAt", qa.getCreatedAt().toString());
+                    m.put("date", qa.getCreatedAt().toString()); // 兼容前端 date 字段
                     return m;
                 })
                 .toList();

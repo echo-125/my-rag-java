@@ -1,0 +1,36 @@
+- generic [ref=e1]:
+  - generic [ref=e60]:
+    - generic [ref=e61]: ⚠️
+    - generic [ref=e62]: 请至少添加一个项目配置（项目名称 + 路径）
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "个人RAG系统" [level=1] [ref=e4]
+      - paragraph [ref=e5]: 个人知识库与代码库 RAG 系统
+    - generic [ref=e6]:
+      - button "对话" [ref=e7] [cursor=pointer]
+      - button "仪表盘" [ref=e8] [cursor=pointer]
+      - button "文档入库" [ref=e9] [cursor=pointer]
+      - button "设置" [ref=e10] [cursor=pointer]
+    - generic [ref=e31]:
+      - heading "数据入库配置" [level=2] [ref=e32]
+      - generic [ref=e33]:
+        - generic [ref=e34]: 项目配置
+        - generic [ref=e36]:
+          - textbox "项目名称" [ref=e38]
+          - textbox "本地路径，如 D:\\code\\myproject" [ref=e40]
+          - button "删除" [ref=e41] [cursor=pointer]:
+            - img [ref=e42]
+        - button "添加项目" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - text: 添加项目
+      - generic [ref=e47]:
+        - button "▶ 开始入库" [active] [ref=e48] [cursor=pointer]:
+          - generic [ref=e49]: ▶
+          - text: 开始入库
+        - button "✕ 清空日志" [ref=e50] [cursor=pointer]:
+          - generic [ref=e51]: ✕
+          - text: 清空日志
+      - generic [ref=e52]: 处理日志
+      - generic [ref=e53]:
+        - generic [ref=e58]: processing.log
+        - generic [ref=e59]: 等待开始...

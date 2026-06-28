@@ -136,7 +136,7 @@ public class LlmConfigService {
             return new TestResult(false, "API 密钥为空，请编辑配置填入密钥", 0, null, false);
         }
 
-        log.info("开始测试 API 连接: name={}, format={}, baseUrl={}", entity.getName(), entity.getApiFormat(), entity.getBaseUrl());
+        log.info("开始测试 API 连接: name={}, format={}, baseUrl={}，model_bane={}", entity.getName(), entity.getApiFormat(), entity.getBaseUrl(), entity.getModelName());
 
         long start = System.currentTimeMillis();
         try {

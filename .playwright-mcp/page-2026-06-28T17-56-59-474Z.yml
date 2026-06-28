@@ -1,0 +1,78 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e61]:
+    - paragraph [ref=e63]: "正在处理项目: wecom..."
+    - paragraph [ref=e64]: 请勿关闭页面
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "个人RAG系统" [level=1] [ref=e4]
+      - paragraph [ref=e5]: 个人知识库与代码库 RAG 系统
+    - generic [ref=e6]:
+      - button "对话" [ref=e7] [cursor=pointer]
+      - button "仪表盘" [ref=e8] [cursor=pointer]
+      - button "文档入库" [ref=e9] [cursor=pointer]
+      - button "设置" [ref=e10] [cursor=pointer]
+    - generic [ref=e31]:
+      - heading "数据入库配置" [level=2] [ref=e32]
+      - generic [ref=e33]:
+        - generic [ref=e34]: 项目配置
+        - generic [ref=e36]:
+          - textbox "项目名称" [ref=e38]: wecom
+          - textbox "本地路径，如 D:\\code\\myproject" [ref=e40]: D:\HeXin\insolu\wecom
+          - button "删除" [ref=e41] [cursor=pointer]:
+            - img [ref=e42]
+        - button "添加项目" [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - text: 添加项目
+      - generic [ref=e47]:
+        - button "↻ 入库中..." [disabled] [ref=e65]:
+          - generic [ref=e66]: ↻
+          - text: 入库中...
+        - button "✕ 清空日志" [ref=e50] [cursor=pointer]:
+          - generic [ref=e51]: ✕
+          - text: 清空日志
+      - generic [ref=e67]:
+        - generic [ref=e68]:
+          - generic [ref=e69]: "处理中: 复印扫描留底FTP柯尼卡美能达复合机-扫描复印留底配置指南 20190531.p..."
+          - generic [ref=e70]: 60%
+        - generic [ref=e73]:
+          - generic [ref=e74]: "✓ 成功: 14"
+          - generic [ref=e75]: "✗ 失败: 0"
+          - generic [ref=e76]: "⊘ 跳过: 0"
+          - generic [ref=e77]: "⏱ 预计剩余: 15s"
+      - generic [ref=e52]: 处理日志
+      - generic [ref=e53]:
+        - generic [ref=e58]: processing.log
+        - generic [ref=e59]: 等待开始...
+        - generic [ref=e78]: "[01:56:35] ℹ 开始入库，共 1 个项目..."
+        - generic [ref=e79]: "[01:56:35] ℹ ── 项目: wecom (D:\\HeXin\\insolu\\wecom)"
+        - generic [ref=e80]: "[01:56:35] • 预处理完成：扫描 75 个文件，支持 25 个，跳过 50 个（产物/二进制 50 + 构建目录 0）"
+        - generic [ref=e81]: "[01:56:35] ℹ 开始处理 25 个文件..."
+        - generic [ref=e82]: "[01:56:35] ⚙ #文印管理系统部署服务器推荐配置 20210101.pdf"
+        - generic [ref=e83]: "[01:56:36] ✓ #文印管理系统部署服务器推荐配置 20210101.pdf (2 chunks)"
+        - generic [ref=e84]: "[01:56:36] ⚙ Nginx高可用方案部署指南.pdf"
+        - generic [ref=e85]: "[01:56:40] ✓ Nginx高可用方案部署指南.pdf (14 chunks，过滤 3 个噪声 chunk)"
+        - generic [ref=e86]: "[01:56:40] ⚙ nginx高可用离线安装手册.pdf"
+        - generic [ref=e87]: "[01:56:41] ✓ nginx高可用离线安装手册.pdf (2 chunks)"
+        - generic [ref=e88]: "[01:56:41] ⚙ XPS mode部署手册20200602.pdf"
+        - generic [ref=e89]: "[01:56:42] ✓ XPS mode部署手册20200602.pdf (1 chunks)"
+        - generic [ref=e90]: "[01:56:42] ⚙ 印核文印管理系统-数据库备份与恢复方法.pdf"
+        - generic [ref=e91]: "[01:56:42] ✓ 印核文印管理系统-数据库备份与恢复方法.pdf (1 chunks，过滤 1 个噪声 chunk)"
+        - generic [ref=e92]: "[01:56:42] ⚙ 印核文印管理系统-管理员手册V5.5 20190531.pdf"
+        - generic [ref=e93]: "[01:56:47] ✓ 印核文印管理系统-管理员手册V5.5 20190531.pdf (11 chunks，过滤 11 个噪声 chunk)"
+        - generic [ref=e94]: "[01:56:47] ⚙ 印核文印管理系统V5.5快速安装实施手册 20190531.pdf"
+        - generic [ref=e95]: "[01:56:49] ✓ 印核文印管理系统V5.5快速安装实施手册 20190531.pdf (5 chunks，过滤 1 个噪声 chunk)"
+        - generic [ref=e96]: "[01:56:49] ⚙ 东芝SDK-部署指南 20210616.pdf"
+        - generic [ref=e97]: "[01:56:51] ✓ 东芝SDK-部署指南 20210616.pdf (3 chunks，过滤 3 个噪声 chunk)"
+        - generic [ref=e98]: "[01:56:51] ⚙ 东芝复合机-管控指南 20210616.pdf"
+        - generic [ref=e99]: "[01:56:52] ✓ 东芝复合机-管控指南 20210616.pdf (2 chunks，过滤 3 个噪声 chunk)"
+        - generic [ref=e100]: "[01:56:52] ⚙ 利盟复合机-管控指南 20210830.pdf"
+        - generic [ref=e101]: "[01:56:53] ✓ 利盟复合机-管控指南 20210830.pdf (3 chunks，过滤 8 个噪声 chunk)"
+        - generic [ref=e102]: "[01:56:53] ⚙ 夏普SDK实施手册V1.0.pdf"
+        - generic [ref=e103]: "[01:56:54] ✓ 夏普SDK实施手册V1.0.pdf (3 chunks)"
+        - generic [ref=e104]: "[01:56:54] ⚙ HPMFP_AutoCopyArchive功能配置说明.docx"
+        - generic [ref=e105]: "[01:56:56] ✓ HPMFP_AutoCopyArchive功能配置说明.docx (2 chunks)"
+        - generic [ref=e106]: "[01:56:56] ⚙ Package_2021-11-19-07-12-44.yhp.xml"
+        - generic [ref=e107]: "[01:56:58] ✓ Package_2021-11-19-07-12-44.yhp.xml (4 chunks，过滤 2 个噪声 chunk)"
+        - generic [ref=e108]: "[01:56:58] ⚙ 惠普复合机-管控指南 20190531.pdf"
+        - generic [ref=e109]: "[01:56:59] ✓ 惠普复合机-管控指南 20190531.pdf (1 chunks，过滤 2 个噪声 chunk)"
+        - generic [ref=e110]: "[01:56:59] ⚙ 复印扫描留底FTP柯尼卡美能达复合机-扫描复印留底配置指南 20190531.pdf"

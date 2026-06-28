@@ -104,7 +104,9 @@ public class EmbeddingConfigService {
                     type TEXT,
                     signature TEXT,
                     start_line TEXT,
-                    end_line TEXT
+                    end_line TEXT,
+                    chunk_index TEXT,
+                    total_chunks TEXT
                 )""", dimension));
         log.info("document_chunks 表重建完成（维度={}）", dimension);
     }

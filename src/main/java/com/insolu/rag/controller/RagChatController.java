@@ -4,19 +4,25 @@ import com.insolu.rag.entity.QaHistoryEntity;
 import com.insolu.rag.entity.QaHistoryRepository;
 import com.insolu.rag.service.RagChatService;
 import com.insolu.rag.service.SpringAiModelRouterService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * RAG 问答控制器。
- * 流式返回 AI 回答，同时将完整对话保存到 QA 历史。
+ * 流式返回 AI 回答（SSE），同时将完整对话保存到 QA 历史。
  */
 @RestController
 @RequestMapping("/api/chat")
 public class RagChatController {
+
+    private static final Logger log = LoggerFactory.getLogger(RagChatController.class);
 
     private final RagChatService ragChatService;
     private final QaHistoryRepository qaHistoryRepo;
@@ -32,33 +38,34 @@ public class RagChatController {
 
     /**
      * POST /api/chat/stream — 流式问答。
-     * 前端通过 SSE 接收 token 流，回答完成后保存到 QA 历史。
+     * SSE 格式：每行 {@code data: {"token":"..."}\n\n}，前端逐 token 拼接后 Markdown 渲染。
+     * 流结束后自动保存问答到 QA 历史。
      */
-    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @PostMapping(value = "/stream", produces = "text/event-stream;charset=UTF-8")
     public Flux<String> streamChat(@RequestBody ChatRequest request) {
-        Flux<String> stream = ragChatService.chat(request.query(), request.modelKey());
+        String query = request.query();
+        String modelKey = request.modelKey();
+        String modelName = resolveModelName(modelKey);
 
-        // 收集完整回答后保存到数据库
-        return stream.doOnComplete(() -> {
-            try {
-                // 获取模型名称
-                String modelName = "unknown";
-                try {
-                    UUID configId = UUID.fromString(request.modelKey());
-                    var models = modelRouter.getAvailableModels();
-                    modelName = models.stream()
-                            .filter(m -> m.id().equals(request.modelKey()))
-                            .map(SpringAiModelRouterService.ModelInfo::name)
-                            .findFirst().orElse("unknown");
-                } catch (Exception ignored) {}
+        AtomicInteger tokenCount = new AtomicInteger(0);
 
-                // 由于 Flux 是流式的，这里只保存问题和模型名
-                // 完整回答需要前端在流结束后回调保存
-                // 这里先保存一个占位，后续可优化
-            } catch (Exception e) {
-                // 保存历史失败不影响用户体验
-            }
-        });
+        Flux<String> stream = ragChatService.chat(query, modelKey)
+                .map(token -> {
+                    // Spring 的 produces="text/event-stream" 会自动包装每个元素为 SSE data 行
+                    // 上游 API 的 SSE 响应可能已经包含 "data: " 前缀，先剥掉
+                    tokenCount.incrementAndGet();
+                    return token.startsWith("data: ") ? token.substring(6) : token;
+                })
+                .doOnComplete(() -> {
+                    log.info("聊天流结束: model={}, tokens={}", modelName, tokenCount.get());
+                })
+                .onErrorResume(e -> {
+                    String errMsg = extractErrorMessage(e);
+                    log.error("聊天流式错误: {}", errMsg, e);
+                    return Flux.just("{\"error\":\"stream_error\"}");
+                });
+
+        return stream;
     }
 
     /**
@@ -75,4 +82,26 @@ public class RagChatController {
 
     public record ChatRequest(String query, String modelKey) {}
     public record QaSaveRequest(String question, String answer, String modelName) {}
+
+    private String resolveModelName(String modelKey) {
+        try {
+            return modelRouter.getAvailableModels().stream()
+                    .filter(m -> m.id().equals(modelKey))
+                    .map(SpringAiModelRouterService.ModelInfo::name)
+                    .findFirst().orElse("unknown");
+        } catch (Exception e) {
+            return "unknown";
+        }
+    }
+
+    private String extractErrorMessage(Throwable e) {
+        Throwable cause = e;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        String msg = cause.getMessage();
+        if (msg == null || msg.isBlank()) msg = cause.getClass().getSimpleName();
+        if (msg.length() > 200) msg = msg.substring(0, 200) + "...";
+        return msg;
+    }
 }
