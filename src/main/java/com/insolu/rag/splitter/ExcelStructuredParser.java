@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.*;
 
 /**
@@ -34,18 +35,23 @@ public class ExcelStructuredParser {
     private static final int CHUNK_THRESHOLD = 200;
 
     /**
-     * 解析 Excel 文件，返回 Markdown 文本列表。
-     * 每个元素对应一个分块后的 Markdown 表格片段，可直接拼接为完整的 Markdown 文档。
-     *
-     * @param fileBytes 文件字节数组
-     * @param fileName  原始文件名（用于日志和元数据）
-     * @return Markdown 文本列表，每个元素为一个分块
-     * @throws IOException 文件读取或解析异常
+     * 解析 Excel 文件（流式），返回 Markdown 文本列表。
+     */
+    public List<String> parse(InputStream inputStream, String fileName) throws IOException {
+        return parseInternal(inputStream, fileName, -1);
+    }
+
+    /**
+     * 解析 Excel 文件（字节数组），返回 Markdown 文本列表。
      */
     public List<String> parse(byte[] fileBytes, String fileName) throws IOException {
+        return parseInternal(new ByteArrayInputStream(fileBytes), fileName, fileBytes.length);
+    }
+
+    private List<String> parseInternal(InputStream inputStream, String fileName, long fileSize) throws IOException {
         List<String> chunks = new ArrayList<>();
 
-        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(fileBytes))) {
+        try (XSSFWorkbook workbook = new XSSFWorkbook(inputStream)) {
             int sheetCount = workbook.getNumberOfSheets();
 
             for (int s = 0; s < sheetCount; s++) {
@@ -92,9 +98,9 @@ public class ExcelStructuredParser {
             log.warn("Excel 解析失败: {} - {}", fileName, e.getMessage());
             // TODO: 对于超大 Excel（>100MB），POI 可能存在内存溢出风险。
             //       后续可考虑使用 SXSSFWorkbook 流式处理或 XSSF Event API 逐行读取。
-            if (fileBytes.length > 100 * 1024 * 1024) {
+            if (fileSize > 100 * 1024 * 1024) {
                 log.warn("Excel 文件过大 ({}MB)，可能影响解析性能: {}",
-                        fileBytes.length / (1024 * 1024), fileName);
+                        fileSize / (1024 * 1024), fileName);
             }
             throw new IOException("Excel 解析失败: " + fileName, e);
         }

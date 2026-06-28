@@ -139,9 +139,8 @@ public class EmbeddingConfigService {
                     elapsed, dim);
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - start;
-            log.error("Embedding 测试失败: {}", entity.getName(), e);
-            String detail = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-            return new TestResult(false, "连接失败: " + detail, elapsed, 0);
+            log.error("Embedding 测试失败: name={}, baseUrl={}, model={}", entity.getName(), entity.getBaseUrl(), entity.getModelName(), e);
+            return new TestResult(false, "连接失败，请检查网络或配置", elapsed, 0);
         }
     }
 

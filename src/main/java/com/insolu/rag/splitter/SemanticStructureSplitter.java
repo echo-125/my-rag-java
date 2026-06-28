@@ -391,9 +391,10 @@ public class SemanticStructureSplitter implements DocumentSplitter {
             return List.of(new SemanticChunk(content, contextPrefix));
         }
 
-        // 计算相邻段落的余弦相似度，识别话题转变点
+        // 计算相邻段落的余弦相似度，识别话题转变点（跳过 null embedding 条目）
         List<Integer> splitPoints = new ArrayList<>();
         for (int i = 0; i < embeddings.size() - 1; i++) {
+            if (embeddings.get(i) == null || embeddings.get(i + 1) == null) continue;
             double similarity = cosineSimilarity(
                     embeddings.get(i).vector(),
                     embeddings.get(i + 1).vector());

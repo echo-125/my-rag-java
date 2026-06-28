@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
 
 /**
  * C# 代码切分器：按 namespace / class / struct / interface / record / enum / method / property 边界切分。
- * 遵循 {@link RegexSplitter} 的成熟模式，注入标准元数据。
+ * 复用 {@link SplitterUtils} 的公共方法，保持与 {@link RegexSplitter} 一致的模式。
  */
 public class CSharpSplitter implements DocumentSplitter {
 
@@ -28,6 +28,11 @@ public class CSharpSplitter implements DocumentSplitter {
             Pattern.compile("^\\s*(public|private|protected|internal|static|sealed|abstract|partial|unsafe|readonly|volatile|virtual|override|async|extern|new|fixed|\\s)*\\s*[\\w<>\\[\\],?]+\\s+\\w+\\s*\\{\\s*(get|set)", Pattern.MULTILINE),
             // 枚举声明
             Pattern.compile("^\\s*(public|private|protected|internal)*\\s*enum\\s+\\w+", Pattern.MULTILINE)
+    );
+
+    /** 注释/特性行前缀（用于 expandToIncludeComments） */
+    private static final Set<String> COMMENT_PREFIXES = Set.of(
+            "//", "///", "/*", "*", "#"
     );
 
     private final String projectName;
@@ -64,7 +69,7 @@ public class CSharpSplitter implements DocumentSplitter {
 
         // 无分割点或仅文件开头 → 按固定行数兜底
         if (splitPoints.size() <= 1) {
-            return splitByLines(sourceCode, lines, 100);
+            return SplitterUtils.splitByLines(lines, 100, projectName, filePath, language);
         }
 
         // 按分割点切分
@@ -74,7 +79,7 @@ public class CSharpSplitter implements DocumentSplitter {
             int end = (i + 1 < splitPoints.size()) ? splitPoints.get(i + 1) : lines.length;
 
             // 向前扩展，包含上方注释和特性（[Attribute]）
-            int expandedStart = expandToIncludeComments(lines, start);
+            int expandedStart = SplitterUtils.expandToIncludeComments(lines, start, COMMENT_PREFIXES);
 
             StringBuilder sb = new StringBuilder();
             for (int j = expandedStart; j < end; j++) {
@@ -83,66 +88,13 @@ public class CSharpSplitter implements DocumentSplitter {
             String text = sb.toString().trim();
             if (text.isEmpty()) continue;
 
-            String signature = extractSignature(lines[start]);
-            segments.add(createSegment(text, signature, expandedStart + 1, end));
+            String signature = SplitterUtils.extractSignature(lines[start]);
+            segments.add(SplitterUtils.createSegment(text, signature, expandedStart + 1, end,
+                    projectName, filePath, language));
         }
 
-        return segments.isEmpty() ? splitByLines(sourceCode, lines, 100) : segments;
-    }
-
-    /** 兜底：按固定行数切分 */
-    private List<TextSegment> splitByLines(String sourceCode, String[] lines, int chunkSize) {
-        List<TextSegment> segments = new ArrayList<>();
-        for (int i = 0; i < lines.length; i += chunkSize) {
-            int end = Math.min(i + chunkSize, lines.length);
-            StringBuilder sb = new StringBuilder();
-            for (int j = i; j < end; j++) {
-                sb.append(lines[j]).append("\n");
-            }
-            String text = sb.toString().trim();
-            if (!text.isEmpty()) {
-                segments.add(createSegment(text, "chunk_" + (i / chunkSize), i + 1, end));
-            }
-        }
-        return segments;
-    }
-
-    /** 向前扩展包含注释行 */
-    private int expandToIncludeComments(String[] lines, int startLine) {
-        int expanded = startLine;
-        for (int i = startLine - 1; i >= 0; i--) {
-            String trimmed = lines[i].trim();
-            if (trimmed.startsWith("//") || trimmed.startsWith("///")
-                    || trimmed.startsWith("/*") || trimmed.startsWith("*")
-                    || trimmed.startsWith("#")
-                    || trimmed.isEmpty()) {
-                expanded = i;
-            } else {
-                break;
-            }
-        }
-        return expanded;
-    }
-
-    /** 从声明行提取签名 */
-    private String extractSignature(String line) {
-        String trimmed = line.trim();
-        int end = trimmed.indexOf('{');
-        if (end < 0) end = trimmed.indexOf(':');
-        if (end < 0) end = trimmed.indexOf(';');
-        if (end < 0) end = trimmed.length();
-        return trimmed.substring(0, end).trim();
-    }
-
-    private TextSegment createSegment(String text, String signature, int startLine, int endLine) {
-        Metadata metadata = new Metadata();
-        metadata.put("project_name", projectName);
-        metadata.put("file_path", filePath);
-        metadata.put("language", language);
-        metadata.put("type", "code");
-        metadata.put("signature", signature);
-        metadata.put("start_line", String.valueOf(startLine));
-        metadata.put("end_line", String.valueOf(endLine));
-        return TextSegment.from(text, metadata);
+        return segments.isEmpty()
+                ? SplitterUtils.splitByLines(lines, 100, projectName, filePath, language)
+                : segments;
     }
 }

@@ -2,6 +2,7 @@ package com.insolu.rag.splitter;
 
 import com.insolu.rag.service.RagConfigService;
 import dev.langchain4j.data.document.Document;
+import dev.langchain4j.data.document.DocumentSplitter;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.data.segment.TextSegment;
@@ -11,15 +12,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.io.ByteArrayInputStream;
+import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
  * 文件切分路由器：根据文件扩展名选择合适的切分器。
+ * 采用注册表模式——新增语言只需在 {@link #SPLITTER_REGISTRY} 中注册一次。
  * 所有路径最终都会注入业务元数据（project_name, file_path, language 等）。
  */
 @Component
@@ -27,6 +31,62 @@ public class FileSplitterRouter {
 
     private static final Logger log = LoggerFactory.getLogger(FileSplitterRouter.class);
     private static final Tika TIKA = new Tika();
+
+    // ═══════════════════════════════════════════════════
+    //  切分器注册表
+    // ═══════════════════════════════════════════════════
+
+    @FunctionalInterface
+    private interface SplitterFactory {
+        DocumentSplitter create(String projectName, String filePath);
+    }
+
+    /** 扩展名 → 切分器工厂注册表。新增语言只需在此添加一行。 */
+    private static final Map<String, SplitterFactory> SPLITTER_REGISTRY = Map.ofEntries(
+            // Java（AST 切分）
+            Map.entry("java", (p, f) -> new JavaAstDocumentSplitter(p, f)),
+            // C#
+            Map.entry("cs", (p, f) -> new CSharpSplitter(p, f, "csharp")),
+            // JavaScript / TypeScript（正则切分）
+            Map.entry("js", (p, f) -> new RegexSplitter(p, f, "javascript")),
+            Map.entry("jsx", (p, f) -> new RegexSplitter(p, f, "javascript")),
+            Map.entry("mjs", (p, f) -> new RegexSplitter(p, f, "javascript")),
+            Map.entry("cjs", (p, f) -> new RegexSplitter(p, f, "javascript")),
+            Map.entry("ts", (p, f) -> new RegexSplitter(p, f, "typescript")),
+            Map.entry("tsx", (p, f) -> new RegexSplitter(p, f, "typescript")),
+            // Python
+            Map.entry("py", (p, f) -> new RegexSplitter(p, f, "python")),
+            // Go
+            Map.entry("go", (p, f) -> new RegexSplitter(p, f, "go")),
+            // Vue / QML / HTML / CSS（专用切分器）
+            Map.entry("vue", (p, f) -> new VueSplitter(p, f, "vue")),
+            Map.entry("qml", (p, f) -> new QmlSplitter(p, f, "qml")),
+            Map.entry("html", (p, f) -> new HtmlSplitter(p, f, "html")),
+            Map.entry("htm", (p, f) -> new HtmlSplitter(p, f, "html")),
+            Map.entry("css", (p, f) -> new CssSplitter(p, f, "css")),
+            Map.entry("scss", (p, f) -> new CssSplitter(p, f, "scss"))
+    );
+
+    /** 语言检测：扩展名 → 语言标识符 */
+    private static final Map<String, String> LANGUAGE_MAP = Map.ofEntries(
+            Map.entry("java", "java"), Map.entry("cs", "csharp"),
+            Map.entry("py", "python"), Map.entry("go", "go"),
+            Map.entry("js", "javascript"), Map.entry("jsx", "javascript"),
+            Map.entry("mjs", "javascript"), Map.entry("cjs", "javascript"),
+            Map.entry("ts", "typescript"), Map.entry("tsx", "typescript"),
+            Map.entry("vue", "vue"), Map.entry("qml", "qml"),
+            Map.entry("html", "html"), Map.entry("htm", "html"),
+            Map.entry("css", "css"), Map.entry("scss", "scss"),
+            Map.entry("md", "markdown"), Map.entry("xml", "xml"),
+            Map.entry("json", "json"), Map.entry("sql", "sql"),
+            Map.entry("sh", "shell"), Map.entry("bat", "shell"),
+            Map.entry("pdf", "document"), Map.entry("doc", "document"),
+            Map.entry("docx", "document")
+    );
+
+    // ═══════════════════════════════════════════════════
+    //  构造器
+    // ═══════════════════════════════════════════════════
 
     private final EmbeddingModel embeddingModel;
     private final RagConfigService ragConfigService;
@@ -36,153 +96,128 @@ public class FileSplitterRouter {
         this.ragConfigService = ragConfigService;
     }
 
+    // ═══════════════════════════════════════════════════
+    //  公共 API
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * 切分单个文件，返回 TextSegment 列表。
+     * 流程：内容提取 → 文本预处理 → 注册表路由切分 → 降级兜底。
+     */
     public List<TextSegment> split(Path file, String projectName) throws IOException {
         String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
         String extension = getExtension(fileName);
         String filePath = file.toString();
-        byte[] bytes = Files.readAllBytes(file);
 
-        // ─── Excel/PPT 使用 POI 结构化解析（替代 Tika 扁平化提取） ───
+        // 流式读取，避免大文件一次性加载全部字节到内存
         String content;
-        if ("xlsx".equals(extension)) {
-            ExcelStructuredParser excelParser = new ExcelStructuredParser();
-            List<String> markdownChunks = excelParser.parse(bytes, fileName);
-            if (markdownChunks.isEmpty()) {
-                log.warn("Excel 结构化解析结果为空，跳过: {}", file.getFileName());
-                return List.of();
-            }
-            content = String.join("\n\n---\n\n", markdownChunks);
-        } else if ("pptx".equals(extension)) {
-            PptxStructuredParser pptParser = new PptxStructuredParser();
-            List<String> slideMarkdowns = pptParser.parse(bytes, fileName);
-            if (slideMarkdowns.isEmpty()) {
-                log.warn("PPT 结构化解析结果为空，跳过: {}", file.getFileName());
-                return List.of();
-            }
-            content = String.join("\n\n---\n\n", slideMarkdowns);
-        } else {
-            // 其他文件类型统一使用 Tika 读取文本内容
-            try {
-                content = TIKA.parseToString(new ByteArrayInputStream(bytes));
-            } catch (Exception e) {
-                log.warn("Tika 解析失败，跳过: {} - {}", file.getFileName(), e.getMessage());
-                return List.of();
-            }
+        try (InputStream is = new BufferedInputStream(Files.newInputStream(file))) {
+            content = extractContent(extension, is, file.getFileName().toString());
         }
-
         if (content == null || content.isBlank()) {
             log.warn("文档内容为空，跳过: {}", file.getFileName());
             return List.of();
         }
 
-        // PDF/Word 文档预处理：将单换行替换为空格，保留双换行作为段落分隔
+        // PDF/Word 预处理
         if ("pdf".equals(extension) || "doc".equals(extension) || "docx".equals(extension)) {
             content = preprocessDocumentText(content);
         }
 
         Document doc = Document.from(content, createFileMetadata(file));
-        List<TextSegment> segments;
 
-        segments = switch (extension) {
-            case "java" -> new JavaAstDocumentSplitter(projectName, filePath).split(doc);
-            case "cs" -> new CSharpSplitter(projectName, filePath, "csharp").split(doc);
-            case "js", "jsx", "ts", "tsx", "mjs", "cjs" -> {
-                String lang = extension.startsWith("ts") ? "typescript" : "javascript";
-                yield new RegexSplitter(projectName, filePath, lang).split(doc);
-            }
-            case "py" -> new RegexSplitter(projectName, filePath, "python").split(doc);
-            case "go" -> new RegexSplitter(projectName, filePath, "go").split(doc);
-            case "vue" -> new VueSplitter(projectName, filePath, "vue").split(doc);
-            case "qml" -> new QmlSplitter(projectName, filePath, "qml").split(doc);
-            case "html", "htm" -> new HtmlSplitter(projectName, filePath, "html").split(doc);
-            case "css", "scss" -> new CssSplitter(projectName, filePath, extension).split(doc);
-            case "md" -> splitDocumentWithSemantics(doc, projectName, filePath, "markdown");
-            case "xlsx", "pptx" ->
-                    splitDocumentWithSemantics(doc, projectName, filePath, "document");
-            case "txt", "csv", "json", "xml", "yaml", "yml",
-                 "properties", "sql", "sh", "bat", "cmd", "gradle" ->
-                    splitAndInjectMetadata(doc, projectName, filePath, "text");
-            case "pdf", "doc", "docx" ->
-                    splitDocumentWithSemantics(doc, projectName, filePath, "document");
-            default -> splitAndInjectMetadata(doc, projectName, filePath, "text");
-        };
+        // 注册表路由
+        SplitterFactory factory = SPLITTER_REGISTRY.get(extension);
+        if (factory != null) {
+            return factory.create(projectName, filePath).split(doc);
+        }
 
-        return segments;
+        // 未注册的扩展名：降级处理
+        if ("md".equals(extension)) {
+            return splitDocumentWithSemantics(doc, projectName, filePath, "markdown");
+        }
+        return splitAndInjectMetadata(doc, projectName, filePath, "text");
     }
+
+    /** 判断文件是否支持处理（按扩展名白名单，单一决策源：注册表 + 语言映射） */
+    public boolean isSupported(String fileName) {
+        String ext = getExtension(fileName.toLowerCase(Locale.ROOT));
+        if (EXCLUDED_EXTENSIONS.contains(ext)) return false;
+        return SPLITTER_REGISTRY.containsKey(ext) || LANGUAGE_MAP.containsKey(ext);
+    }
+
+    /** 根据文件扩展名推断语言 */
+    public String detectLanguage(String filePath) {
+        String ext = getExtension(filePath.toLowerCase(Locale.ROOT));
+        return LANGUAGE_MAP.getOrDefault(ext, "text");
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  内容提取
+    // ═══════════════════════════════════════════════════
+
+    /** 根据扩展名选择内容提取方式（流式） */
+    private String extractContent(String extension, InputStream is, String fileName) {
+        try {
+            return switch (extension) {
+                case "xlsx" -> {
+                    // POI 内部会缓冲流，直接传入即可
+                    List<String> chunks = new ExcelStructuredParser().parse(is, fileName);
+                    yield chunks.isEmpty() ? null : String.join("\n\n---\n\n", chunks);
+                }
+                case "pptx" -> {
+                    List<String> slides = new PptxStructuredParser().parse(is, fileName);
+                    yield slides.isEmpty() ? null : String.join("\n\n---\n\n", slides);
+                }
+                default -> TIKA.parseToString(is);
+            };
+        } catch (Exception e) {
+            log.warn("内容提取失败，跳过: {} - {}", fileName, e.getMessage());
+            return null;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  降级切分器（未注册扩展名使用）
+    // ═══════════════════════════════════════════════════
 
     /**
-     * 预处理文档文本：将连续的单行换行替换为空格，仅保留双换行作为段落分隔。
-     * 减少 PDF 视觉换行造成的碎片化。
-     * 同时去除页眉页脚水印。
+     * 降级：使用标准递归切分器（段落 → 换行 → 句子 → 单词 → 字符）。
      */
-    private String preprocessDocumentText(String content) {
-        // 1. 将 \r\n 统一为 \n
-        content = content.replace("\r\n", "\n");
+    private List<TextSegment> splitAndInjectMetadata(Document doc, String projectName,
+                                                      String filePath, String type) {
+        int maxSize = ragConfigService.getInt("max_segment_size", 1000);
+        int overlap = ragConfigService.getInt("max_overlap_size", 200);
+        DocumentSplitter recursiveSplitter = DocumentSplitters.recursive(maxSize, overlap);
+        List<TextSegment> segments = recursiveSplitter.split(doc);
 
-        // 2. 去除页眉页脚水印（重复出现的短行）
-        content = removeHeaderFooterWatermarks(content);
-
-        // 3. 将连续单换行（非双换行）替换为空格
-        //    例如 "line1\nline2\n\nline3" -> "line1 line2\n\nline3"
-        content = content.replaceAll("(?<!\n)\n(?!\n)", " ");
-
-        // 4. 将 3 个及以上连续换行压缩为 2 个（段落分隔）
-        content = content.replaceAll("\n{3,}", "\n\n");
-
-        // 5. 将连续多个空格压缩为单个空格
-        content = content.replaceAll("[ \\t]+", " ");
-
-        return content;
+        return segments.stream()
+                .map(seg -> {
+                    Metadata meta = new Metadata(seg.metadata().toMap());
+                    meta.put("project_name", projectName);
+                    meta.put("file_path", filePath);
+                    meta.put("language", detectLanguage(filePath));
+                    meta.put("type", type);
+                    meta.put("signature", "");
+                    return TextSegment.from(seg.text(), meta);
+                })
+                .toList();
     }
 
-    /**
-     * 去除页眉页脚水印：移除重复出现的短行（如公司名、产品名）
-     */
-    private String removeHeaderFooterWatermarks(String content) {
-        String[] lines = content.split("\n");
-        List<String> cleanedLines = new ArrayList<>();
-
-        // 统计每行出现的频率
-        Map<String, Integer> lineFrequency = new HashMap<>();
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.length() > 0 && trimmed.length() < 80) {
-                lineFrequency.merge(trimmed, 1, Integer::sum);
-            }
-        }
-
-        // 标记高频短行为水印（出现 5 次以上且长度 < 80 字符）- 提高阈值避免误判
-        Set<String> watermarks = new HashSet<>();
-        for (Map.Entry<String, Integer> entry : lineFrequency.entrySet()) {
-            if (entry.getValue() >= 5 && entry.getKey().length() < 80) {
-                watermarks.add(entry.getKey());
-            }
-        }
-
-        // 移除水印行
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (!watermarks.contains(trimmed)) {
-                cleanedLines.add(line);
-            }
-        }
-
-        return String.join("\n", cleanedLines);
-    }
+    // ═══════════════════════════════════════════════════
+    //  文档语义切分（PDF/Word/Markdown）
+    // ═══════════════════════════════════════════════════
 
     /**
      * 使用 SemanticStructureSplitter 处理 PDF/Word/Markdown 文档。
-     * 所有切分参数从 RagConfigService 动态读取。
-     * 如果 EmbeddingModel 不可用（未激活配置），自动降级为递归切分器。
-     *
-     * @param type 文档类型，用于元数据注入（如 "document"、"markdown"）
+     * 如果 EmbeddingModel 不可用，自动降级为递归切分器。
      */
     private List<TextSegment> splitDocumentWithSemantics(Document doc, String projectName,
                                                           String filePath, String type) {
         try {
-            double threshold  = ragConfigService.getDouble("semantic_threshold", 0.65);
-            int triggerSize   = ragConfigService.getInt("max_segment_size", 1000) + 200;
-            int fallbackMax   = ragConfigService.getInt("max_segment_size", 1000);
+            double threshold = ragConfigService.getDouble("semantic_threshold", 0.65);
+            int triggerSize = ragConfigService.getInt("max_segment_size", 1000) + 200;
+            int fallbackMax = ragConfigService.getInt("max_segment_size", 1000);
             int fallbackOverlap = ragConfigService.getInt("max_overlap_size", 200);
 
             SemanticStructureSplitter semanticSplitter = new SemanticStructureSplitter(
@@ -216,113 +251,93 @@ public class FileSplitterRouter {
             log.warn("语义切分异常，降级为递归切分器: {}", e.getMessage());
         }
 
-        // 降级：使用标准递归切分器
         log.info("使用递归切分器处理: {}", filePath);
         return splitAndInjectMetadata(doc, projectName, filePath, type);
     }
 
+    // ═══════════════════════════════════════════════════
+    //  文本预处理
+    // ═══════════════════════════════════════════════════
+
     /**
-     * 使用递归切分器（段落 → 换行 → 句子 → 单词 → 字符），尊重段落和代码块边界。
-     * maxSegmentSize=1000 字符，overlap=200 字符，确保充足上下文重叠。
+     * 预处理文档文本：将连续的单行换行替换为空格，仅保留双换行作为段落分隔。
      */
-    private List<TextSegment> splitAndInjectMetadata(Document doc, String projectName,
-                                                      String filePath, String type) {
-        // 使用递归切分器，参数从 RagConfigService 动态读取
-        int maxSize   = ragConfigService.getInt("max_segment_size", 1000);
-        int overlap   = ragConfigService.getInt("max_overlap_size", 200);
-        dev.langchain4j.data.document.DocumentSplitter recursiveSplitter =
-                DocumentSplitters.recursive(maxSize, overlap);
-        List<TextSegment> segments = recursiveSplitter.split(doc);
-
-        // LangChain4j 的切分器不携带自定义 metadata，需要手动注入业务字段
-        return segments.stream()
-                .map(seg -> {
-                    Metadata meta = new Metadata(seg.metadata().toMap());
-                    meta.put("project_name", projectName);
-                    meta.put("file_path", filePath);
-                    meta.put("language", detectLanguage(filePath));
-                    meta.put("type", type);
-                    meta.put("signature", "");
-                    return TextSegment.from(seg.text(), meta);
-                })
-                .toList();
+    private String preprocessDocumentText(String content) {
+        content = content.replace("\r\n", "\n");
+        content = removeHeaderFooterWatermarks(content);
+        content = PAT_SINGLE_NEWLINE.matcher(content).replaceAll(" ");
+        content = PAT_MULTI_NEWLINE.matcher(content).replaceAll("\n\n");
+        content = PAT_EXCESS_SPACE.matcher(content).replaceAll(" ");
+        return content;
     }
 
-    /** 根据文件扩展名推断语言 */
-    private String detectLanguage(String filePath) {
-        String lower = filePath.toLowerCase(Locale.ROOT);
-        if (lower.endsWith(".java")) return "java";
-        if (lower.endsWith(".cs")) return "csharp";
-        if (lower.endsWith(".py")) return "python";
-        if (lower.endsWith(".go")) return "go";
-        if (lower.endsWith(".js") || lower.endsWith(".jsx") || lower.endsWith(".mjs")) return "javascript";
-        if (lower.endsWith(".ts") || lower.endsWith(".tsx")) return "typescript";
-        if (lower.endsWith(".vue")) return "vue";
-        if (lower.endsWith(".qml")) return "qml";
-        if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
-        if (lower.endsWith(".css")) return "css";
-        if (lower.endsWith(".scss")) return "scss";
-        if (lower.endsWith(".md")) return "markdown";
-        if (lower.endsWith(".xml")) return "xml";
-        if (lower.endsWith(".json")) return "json";
-        if (lower.endsWith(".sql")) return "sql";
-        if (lower.endsWith(".sh") || lower.endsWith(".bat")) return "shell";
-        if (lower.endsWith(".pdf") || lower.endsWith(".doc") || lower.endsWith(".docx")) return "document";
-        return "text";
+    /** 去除页眉页脚水印：移除重复出现的短行 */
+    private String removeHeaderFooterWatermarks(String content) {
+        String[] lines = content.split("\n");
+        List<String> cleanedLines = new ArrayList<>();
+
+        Map<String, Integer> lineFrequency = new HashMap<>();
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty() && trimmed.length() < 80) {
+                lineFrequency.merge(trimmed, 1, Integer::sum);
+            }
+        }
+
+        Set<String> watermarks = new HashSet<>();
+        for (Map.Entry<String, Integer> entry : lineFrequency.entrySet()) {
+            if (entry.getValue() >= 5 && entry.getKey().length() < 80) {
+                watermarks.add(entry.getKey());
+            }
+        }
+
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (!watermarks.contains(trimmed)) {
+                cleanedLines.add(line);
+            }
+        }
+
+        return String.join("\n", cleanedLines);
     }
+
+    // ═══════════════════════════════════════════════════
+    //  常量与工具
+    // ═══════════════════════════════════════════════════
+
+    // ─── 预处理正则（预编译，避免 replaceAll 热循环中反复编译）───
+    private static final Pattern PAT_SINGLE_NEWLINE = Pattern.compile("(?<!\\n)\\n(?!\\n)");
+    private static final Pattern PAT_MULTI_NEWLINE = Pattern.compile("\\n{3,}");
+    private static final Pattern PAT_EXCESS_SPACE = Pattern.compile("[ \\t]+");
 
     /** 产物包/二进制/媒体文件扩展名（始终排除） */
-    private static final java.util.Set<String> EXCLUDED_EXTENSIONS = java.util.Set.of(
-            // 压缩包
+    private static final Set<String> EXCLUDED_EXTENSIONS = Set.of(
             "zip", "rar", "tar", "gz", "7z", "bz2", "xz", "cab",
-            // 二进制库/可执行文件
             "jar", "war", "ear", "xjar", "dll", "exe", "so", "dylib", "msi", "cpl",
-            // 编译产物
             "class", "obj", "o", "a", "lib", "pdb",
-            // 媒体文件
             "mp3", "mp4", "avi", "mov", "mkv", "wmv", "flv",
-            // 图片
             "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico", "webp",
-            // 字体
             "ttf", "otf", "woff", "woff2", "eot",
-            // 日志/临时文件
             "log", "tmp", "temp", "swp", "swo", "bak", "orig",
-            // Python 缓存
             "pyc", "pyo",
-            // source maps
             "map", "ts.map", "js.map", "css.map",
-            // IDE 配置
             "iml",
-            // 其他不可读取/无意义格式
             "pf", "jfc", "ps", "pcl", "xps", "psd", "access", "bfc", "dat", "data",
-            "cfg", "src", "lic", "policy", "jsa", "template"
+            "lic", "policy", "jsa", "template"
     );
 
-    /** 构建产物/IDE/日志目录关键词（路径包含任一关键词则跳过） */
-    private static final java.util.Set<String> EXCLUDED_PATH_KEYWORDS = java.util.Set.of(
-            // Java 构建产物
-            "target/", "BOOT-INF/",
-            // .NET 构建产物
-            "bin/", "obj/", "packages/",
-            // 前端构建产物
-            "node_modules/", "dist/", "build/", "unpackage/", ".next/", ".nuxt/",
-            // IDE 配置
-            ".idea/", ".vscode/", ".settings/",
-            // VCS
-            ".git/", ".svn/", ".hg/",
-            // 日志
-            "logs/",
-            // Python 缓存
-            "__pycache__/", ".mypy_cache/",
-            // Gradle 缓存
-            ".gradle/"
+    /** 文档/文本/配置类扩展名（isSupported 白名单的一部分，不走注册表切分器） */
+    private static final Set<String> DOCUMENT_TEXT_EXTENSIONS = Set.of(
+            "md", "txt", "pdf", "doc", "docx", "pptx", "xlsx", "url",
+            "csv", "json", "xml", "yaml", "yml", "properties", "conf",
+            "sql", "sh", "bat", "cmd", "gradle"
     );
 
     /**
-     * 需在递归扫描时跳过的目录名（无尾部斜杠，用于 {@code preVisitDirectory} 匹配）。
+     * 需在递归扫描时跳过的目录名。
      * 由 {@link com.insolu.rag.service.IngestionService} 引用，保持过滤规则一致。
      */
-    public static final java.util.Set<String> SKIP_DIR_NAMES = java.util.Set.of(
+    public static final Set<String> SKIP_DIR_NAMES = Set.of(
             "node_modules", ".git", ".svn", ".hg",
             "target", "build", "dist", "bin", "obj", "packages",
             ".idea", ".vscode", ".settings",
@@ -330,33 +345,6 @@ public class FileSplitterRouter {
             "__pycache__", ".mypy_cache", ".gradle",
             "BOOT-INF", "out"
     );
-
-    public boolean isSupported(String fileName) {
-        String lower = fileName.toLowerCase(Locale.ROOT);
-        String ext = getExtension(lower);
-
-        // 1. 排除产物包和二进制文件（按扩展名）
-        if (EXCLUDED_EXTENSIONS.contains(ext)) return false;
-
-        // 2. 排除构建目录/IDE/VCS/日志中的文件（按路径关键词）
-        for (String keyword : EXCLUDED_PATH_KEYWORDS) {
-            if (lower.contains(keyword)) return false;
-        }
-
-        // 3. 白名单检查
-        return switch (ext) {
-            // 代码文件
-            case "java", "cs", "js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "go",
-                 "vue", "qml", "html", "htm", "css", "scss",
-            // 文档文件
-                 "md", "txt", "pdf", "doc", "docx", "pptx", "xlsx", "url",
-            // 配置/数据文件
-                 "csv", "json", "xml", "yaml", "yml", "properties", "conf",
-            // 脚本文件
-                 "sql", "sh", "bat", "cmd", "gradle" -> true;
-            default -> false;
-        };
-    }
 
     private String getExtension(String fileName) {
         int dot = fileName.lastIndexOf('.');

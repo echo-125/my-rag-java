@@ -2,7 +2,6 @@ package com.insolu.rag.splitter;
 
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.DocumentSplitter;
-import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
 
 import java.util.ArrayList;
@@ -98,7 +97,7 @@ public class HtmlSplitter implements DocumentSplitter {
         }
 
         if (splitPoints.size() <= 1) {
-            return splitByLines(sourceCode, lines, 100);
+            return SplitterUtils.splitByLines(lines, 100, projectName, filePath, language);
         }
 
         List<TextSegment> segments = new ArrayList<>();
@@ -114,10 +113,11 @@ public class HtmlSplitter implements DocumentSplitter {
             if (text.isEmpty()) continue;
 
             String signature = extractSignature(lines[start]);
-            segments.add(createSegment(text, signature, start + 1, end));
+            segments.add(SplitterUtils.createSegment(text, signature, start + 1, end,
+                    projectName, filePath, language));
         }
 
-        return segments.isEmpty() ? splitByLines(sourceCode, lines, 100) : segments;
+        return segments.isEmpty() ? SplitterUtils.splitByLines(lines, 100, projectName, filePath, language) : segments;
     }
 
     private String extractSignature(String line) {
@@ -140,31 +140,5 @@ public class HtmlSplitter implements DocumentSplitter {
         return trimmed.substring(0, Math.min(trimmed.length(), 80));
     }
 
-    private List<TextSegment> splitByLines(String sourceCode, String[] lines, int chunkSize) {
-        List<TextSegment> segments = new ArrayList<>();
-        for (int i = 0; i < lines.length; i += chunkSize) {
-            int end = Math.min(i + chunkSize, lines.length);
-            StringBuilder sb = new StringBuilder();
-            for (int j = i; j < end; j++) {
-                sb.append(lines[j]).append("\n");
-            }
-            String text = sb.toString().trim();
-            if (!text.isEmpty()) {
-                segments.add(createSegment(text, "chunk_" + (i / chunkSize), i + 1, end));
-            }
-        }
-        return segments;
-    }
 
-    private TextSegment createSegment(String text, String signature, int startLine, int endLine) {
-        Metadata metadata = new Metadata();
-        metadata.put("project_name", projectName);
-        metadata.put("file_path", filePath);
-        metadata.put("language", language);
-        metadata.put("type", "code");
-        metadata.put("signature", signature);
-        metadata.put("start_line", String.valueOf(startLine));
-        metadata.put("end_line", String.valueOf(endLine));
-        return TextSegment.from(text, metadata);
-    }
 }

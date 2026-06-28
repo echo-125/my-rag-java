@@ -2,7 +2,6 @@ package com.insolu.rag.splitter;
 
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.DocumentSplitter;
-import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
 
 import java.util.ArrayList;
@@ -57,7 +56,7 @@ public class VueSplitter implements DocumentSplitter {
         // 第一级：按 template/script/style 标签切分
         List<Block> blocks = splitBySfcBlocks(lines);
         if (blocks.isEmpty()) {
-            return splitByLines(sourceCode, lines, 100);
+            return SplitterUtils.splitByLines(lines, 100, projectName, filePath, language);
         }
 
         // 第二/三级：对 script 和 style 块内部进一步切分
@@ -71,12 +70,13 @@ public class VueSplitter implements DocumentSplitter {
                 // template 块保持完整
                 String text = block.text().trim();
                 if (!text.isEmpty()) {
-                    segments.add(createSegment(text, "template", block.startLine, block.endLine));
+                    segments.add(SplitterUtils.createSegment(text, "template",
+                        block.startLine, block.endLine, projectName, filePath, language));
                 }
             }
         }
 
-        return segments.isEmpty() ? splitByLines(sourceCode, lines, 100) : segments;
+        return segments.isEmpty() ? SplitterUtils.splitByLines(lines, 100, projectName, filePath, language) : segments;
     }
 
     /** 按 SFC 顶层块切分 */
@@ -150,7 +150,8 @@ public class VueSplitter implements DocumentSplitter {
         if (splitPoints.size() <= 1) {
             String text = block.text().trim();
             if (!text.isEmpty()) {
-                return List.of(createSegment(text, "script", block.startLine, block.endLine));
+                return List.of(SplitterUtils.createSegment(text, "script",
+                        block.startLine, block.endLine, projectName, filePath, language));
             }
             return List.of();
         }
@@ -160,7 +161,7 @@ public class VueSplitter implements DocumentSplitter {
             int start = splitPoints.get(i);
             int end = (i + 1 < splitPoints.size()) ? splitPoints.get(i + 1) : lines.length;
 
-            int expandedStart = expandToIncludeComments(lines, start);
+            int expandedStart = SplitterUtils.expandToIncludeComments(lines, start, COMMENT_PREFIXES);
 
             StringBuilder sb = new StringBuilder();
             for (int j = expandedStart; j < end; j++) {
@@ -168,9 +169,9 @@ public class VueSplitter implements DocumentSplitter {
             }
             String text = sb.toString().trim();
             if (!text.isEmpty()) {
-                String sig = extractSignature(lines[start]);
-                segments.add(createSegment(text, "script:" + sig,
-                        block.startLine + expandedStart, block.startLine + end - 1));
+                String sig = SplitterUtils.extractSignature(lines[start]);
+                segments.add(SplitterUtils.createSegment(text, "script:" + sig,
+                        block.startLine + expandedStart, block.startLine + end - 1, projectName, filePath, language));
             }
         }
         return segments;
@@ -193,7 +194,8 @@ public class VueSplitter implements DocumentSplitter {
         if (splitPoints.size() <= 1) {
             String text = block.text().trim();
             if (!text.isEmpty()) {
-                return List.of(createSegment(text, "style", block.startLine, block.endLine));
+                return List.of(SplitterUtils.createSegment(text, "style",
+                        block.startLine, block.endLine, projectName, filePath, language));
             }
             return List.of();
         }
@@ -209,65 +211,17 @@ public class VueSplitter implements DocumentSplitter {
             }
             String text = sb.toString().trim();
             if (!text.isEmpty()) {
-                String sig = extractSignature(lines[start]);
-                segments.add(createSegment(text, "style:" + sig,
-                        block.startLine + start, block.startLine + end - 1));
+                String sig = SplitterUtils.extractSignature(lines[start]);
+                segments.add(SplitterUtils.createSegment(text, "style:" + sig,
+                        block.startLine + start, block.startLine + end - 1, projectName, filePath, language));
             }
         }
         return segments;
     }
 
-    private int expandToIncludeComments(String[] lines, int startLine) {
-        int expanded = startLine;
-        for (int i = startLine - 1; i >= 0; i--) {
-            String trimmed = lines[i].trim();
-            if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")
-                    || trimmed.startsWith("/**") || trimmed.startsWith("@")
-                    || trimmed.isEmpty()) {
-                expanded = i;
-            } else {
-                break;
-            }
-        }
-        return expanded;
-    }
-
-    private String extractSignature(String line) {
-        String trimmed = line.trim();
-        int end = trimmed.indexOf('{');
-        if (end < 0) end = trimmed.indexOf(':');
-        if (end < 0) end = trimmed.length();
-        return trimmed.substring(0, end).trim();
-    }
-
-    /** 兜底：按固定行数切分 */
-    private List<TextSegment> splitByLines(String sourceCode, String[] lines, int chunkSize) {
-        List<TextSegment> segments = new ArrayList<>();
-        for (int i = 0; i < lines.length; i += chunkSize) {
-            int end = Math.min(i + chunkSize, lines.length);
-            StringBuilder sb = new StringBuilder();
-            for (int j = i; j < end; j++) {
-                sb.append(lines[j]).append("\n");
-            }
-            String text = sb.toString().trim();
-            if (!text.isEmpty()) {
-                segments.add(createSegment(text, "chunk_" + (i / chunkSize), i + 1, end));
-            }
-        }
-        return segments;
-    }
-
-    private TextSegment createSegment(String text, String signature, int startLine, int endLine) {
-        Metadata metadata = new Metadata();
-        metadata.put("project_name", projectName);
-        metadata.put("file_path", filePath);
-        metadata.put("language", language);
-        metadata.put("type", "code");
-        metadata.put("signature", signature);
-        metadata.put("start_line", String.valueOf(startLine));
-        metadata.put("end_line", String.valueOf(endLine));
-        return TextSegment.from(text, metadata);
-    }
+    /** 注释/装饰器行前缀（用于 expandToIncludeComments） */
+    private static final java.util.Set<String> COMMENT_PREFIXES = java.util.Set.of(
+            "//", "/*", "*", "/**", "@");
 
     /** SFC 块内部表示 */
     private record Block(String tag, String text, int startLine, int endLine) {}

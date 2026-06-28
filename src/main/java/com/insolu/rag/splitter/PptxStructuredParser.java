@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -23,18 +24,19 @@ public class PptxStructuredParser {
     private static final Logger log = LoggerFactory.getLogger(PptxStructuredParser.class);
 
     /**
-     * 解析 PPT 文件，返回 Markdown 文本。
-     * 每个元素对应一张幻灯片的 Markdown 表示。
-     *
-     * @param fileBytes 文件字节数组
-     * @param fileName  原始文件名
-     * @return Markdown 文本列表，每个元素对应一张幻灯片
-     * @throws IOException 文件读取或解析异常
+     * 解析 PPT 文件（字节数组），返回 Markdown 文本列表。
      */
     public List<String> parse(byte[] fileBytes, String fileName) throws IOException {
+        return parse(new ByteArrayInputStream(fileBytes), fileName);
+    }
+
+    /**
+     * 解析 PPT 文件（流式），返回 Markdown 文本列表。
+     */
+    public List<String> parse(InputStream inputStream, String fileName) throws IOException {
         List<String> slides = new ArrayList<>();
 
-        try (XMLSlideShow ppt = new XMLSlideShow(new ByteArrayInputStream(fileBytes))) {
+        try (XMLSlideShow ppt = new XMLSlideShow(inputStream)) {
             List<XSLFSlide> slideList = ppt.getSlides();
             int totalSlides = slideList.size();
 

@@ -47,7 +47,8 @@ public final class SplitterUtils {
     }
 
     /**
-     * 从声明行提取签名（截取到第一个 { 或 : 或行尾）。
+     * 从声明行提取签名（截取到第一个 { 或 : 或 ; 或行尾）。
+     * C# 的 record 声明以 ; 结尾，需要额外处理。
      *
      * @param line 声明行
      * @return 签名文本
@@ -56,6 +57,7 @@ public final class SplitterUtils {
         String trimmed = line.trim();
         int end = trimmed.indexOf('{');
         if (end < 0) end = trimmed.indexOf(':');
+        if (end < 0) end = trimmed.indexOf(';');
         if (end < 0) end = trimmed.length();
         return trimmed.substring(0, end).trim();
     }
@@ -89,15 +91,23 @@ public final class SplitterUtils {
     }
 
     /**
-     * 创建带标准元数据的 TextSegment。
+     * 创建带标准元数据的 TextSegment（默认 type="code"）。
      */
     public static TextSegment createSegment(String text, String signature, int startLine, int endLine,
                                              String projectName, String filePath, String language) {
+        return createSegment(text, signature, startLine, endLine, projectName, filePath, language, "code");
+    }
+
+    /**
+     * 创建带标准元数据的 TextSegment（指定 type）。
+     */
+    public static TextSegment createSegment(String text, String signature, int startLine, int endLine,
+                                             String projectName, String filePath, String language, String type) {
         Metadata metadata = new Metadata();
         metadata.put("project_name", projectName);
         metadata.put("file_path", filePath);
         metadata.put("language", language);
-        metadata.put("type", "code");
+        metadata.put("type", type);
         metadata.put("signature", signature);
         metadata.put("start_line", String.valueOf(startLine));
         metadata.put("end_line", String.valueOf(endLine));

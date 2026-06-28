@@ -65,167 +65,21 @@ public class IngestionService {
     public void ingest(List<String> paths, String projectName, SseEmitter emitter) {
         Thread.startVirtualThread(() -> {
             try {
-                // ─── 阶段 1：预处理遍历统计 ───
-                List<Path> allFiles = new ArrayList<>();
-                int totalScanned = 0;
-                int supportedCount = 0;
-                int skippedCount = 0;
-                int skippedDirFileCount = 0;
+                // 阶段 1：预处理遍历统计
+                IngestionState state = preprocessFiles(paths, emitter);
+                if (state == null) return;
 
-                for (String pathStr : paths) {
-                    Path rootPath = Path.of(pathStr);
-                    if (!Files.exists(rootPath)) {
-                        sendEvent(emitter, "error", "路径不存在: " + pathStr, null);
-                        continue;
-                    }
-                    ScanResult scanResult = scanAllFiles(rootPath);
-                    List<Path> files = scanResult.files();
-                    skippedDirFileCount += scanResult.skippedDirFileCount();
-                    totalScanned += files.size();
-                    long sup = files.stream().filter(f -> splitterRouter.isSupported(f.getFileName().toString())).count();
-                    supportedCount += (int) sup;
-                    skippedCount += (int) (files.size() - sup);
-                    allFiles.addAll(files);
-                }
-
-                // 只保留支持的文件
-                List<Path> supportedFiles = allFiles.stream()
-                        .filter(f -> splitterRouter.isSupported(f.getFileName().toString()))
-                        .toList();
-
-                int totalFiles = supportedFiles.size();
-                if (totalFiles == 0) {
-                    sendEvent(emitter, "done", "未发现可处理文件（扫描 " + totalScanned + " 个，全部跳过）",
-                            new ProgressStats(0, 0, 0, 0, 0, "", 100, "--"));
-                    emitter.complete();
-                    return;
-                }
-
-                // 发送预处理统计
-                int totalSkipped = skippedCount + skippedDirFileCount;
-                sendEvent(emitter, "preprocess",
-                        String.format("预处理完成：扫描 %d 个文件，支持 %d 个，跳过 %d 个（产物/二进制 %d + 构建目录 %d）",
-                                totalScanned, supportedCount, totalSkipped, skippedCount, skippedDirFileCount),
-                        new ProgressStats(totalFiles, 0, 0, 0, totalSkipped, "", 0, "计算中..."));
+                int totalFiles = state.supportedFiles().size();
                 sendEvent(emitter, "info", "开始处理 " + totalFiles + " 个文件...",
-                        new ProgressStats(totalFiles, 0, 0, 0, skippedCount, "", 0, "计算中..."));
+                        new ProgressStats(totalFiles, 0, 0, 0, state.skippedCount(), "", 0, "计算中..."));
 
-                // ─── 阶段 2：逐文件处理 ───
+                // 阶段 2：逐文件处理
                 long startTime = System.currentTimeMillis();
-                long lastHeartbeatTime = startTime;
-                AtomicInteger processed = new AtomicInteger(0);
-                AtomicInteger success = new AtomicInteger(0);
-                AtomicInteger failed = new AtomicInteger(0);
-                AtomicInteger skipped = new AtomicInteger(0);
-                AtomicInteger totalChunks = new AtomicInteger(0);
+                ProcessingCounters counters = new ProcessingCounters();
+                processFiles(state.supportedFiles(), projectName, emitter, counters, startTime);
 
-                for (Path file : supportedFiles) {
-                    int current = processed.incrementAndGet();
-                    String fileName = file.getFileName().toString();
-                    int pct = (int) ((current * 100L) / totalFiles);
-                    long elapsed = System.currentTimeMillis() - startTime;
-                    String eta = calcEta(current, totalFiles, elapsed);
-
-                    // 每 5 分钟发送心跳提醒
-                    if (System.currentTimeMillis() - lastHeartbeatTime > 300_000) {
-                        sendEvent(emitter, "heartbeat",
-                                String.format("仍在处理... 已完成 %d/%d (%d%%)，耗时 %s",
-                                        current, totalFiles, pct, formatDuration(elapsed)),
-                                new ProgressStats(totalFiles, current, success.get(), failed.get(),
-                                        skipped.get(), fileName, pct, eta));
-                        lastHeartbeatTime = System.currentTimeMillis();
-                    }
-
-                    // 处理中状态
-                    sendEvent(emitter, "processing", fileName,
-                            new ProgressStats(totalFiles, current, success.get(), failed.get(),
-                                    skipped.get(), fileName, pct, eta));
-
-                    try {
-                        List<TextSegment> segments = splitterRouter.split(file, projectName);
-                        if (segments.isEmpty()) {
-                            skipped.incrementAndGet();
-                            sendEvent(emitter, "skip", "跳过（无有效内容）: " + fileName,
-                                    new ProgressStats(totalFiles, current, success.get(), failed.get(),
-                                            skipped.get(), fileName, pct, eta));
-                            continue;
-                        }
-
-                        List<TextSegment> cleanedSegments = cleanSegments(segments, fileName);
-                        if (cleanedSegments.isEmpty()) {
-                            skipped.incrementAndGet();
-                            sendEvent(emitter, "skip", "跳过（清洗后无有效内容）: " + fileName,
-                                    new ProgressStats(totalFiles, current, success.get(), failed.get(),
-                                            skipped.get(), fileName, pct, eta));
-                            continue;
-                        }
-
-                        injectChunkIndex(cleanedSegments);
-
-                        int stored = embedAndStoreBatched(cleanedSegments, fileName);
-                        if (stored == 0) {
-                            failed.incrementAndGet();
-                            sendEvent(emitter, "error", fileName + ": 向量化存储全部失败（" + cleanedSegments.size() + " chunks）",
-                                    new ProgressStats(totalFiles, current, success.get(), failed.get(),
-                                            skipped.get(), fileName, pct, eta));
-                        } else {
-                            totalChunks.addAndGet(stored);
-                            int filtered = segments.size() - cleanedSegments.size();
-                            String filterMsg = filtered > 0 ? "，过滤 " + filtered + " 个噪声 chunk" : "";
-                            if (stored < cleanedSegments.size()) {
-                                sendEvent(emitter, "success",
-                                        fileName + " (" + stored + "/" + cleanedSegments.size() + " chunks，部分失败" + filterMsg + ")",
-                                        new ProgressStats(totalFiles, current, success.incrementAndGet(), failed.get(),
-                                                skipped.get(), fileName, pct, eta));
-                            } else {
-                                success.incrementAndGet();
-                                sendEvent(emitter, "success", fileName + " (" + stored + " chunks" + filterMsg + ")",
-                                        new ProgressStats(totalFiles, current, success.get(), failed.get(),
-                                                skipped.get(), fileName, pct, eta));
-                            }
-                        }
-
-                    } catch (Exception e) {
-                        failed.incrementAndGet();
-                        sendEvent(emitter, "error", fileName + ": " + e.getMessage(),
-                                new ProgressStats(totalFiles, current, success.get(), failed.get(),
-                                        skipped.get(), fileName, pct, eta));
-                        log.error("处理文件失败: {}", fileName, e);
-                    }
-                }
-
-                // ─── 阶段 3：生成详细报告 ───
-                long totalTime = System.currentTimeMillis() - startTime;
-                String timeStr = formatDuration(totalTime);
-                double avgTimePerFile = totalFiles > 0 ? (totalTime / 1000.0) / totalFiles : 0;
-
-                String summary = String.format("处理完成！耗时 %s，成功 %d，失败 %d，跳过 %d，共 %d chunks",
-                        timeStr, success.get(), failed.get(), skipped.get(), totalChunks.get());
-                sendEvent(emitter, "done", summary,
-                        new ProgressStats(totalFiles, totalFiles, success.get(), failed.get(),
-                                skipped.get(), "", 100, "0s"));
-
-                // 发送详细报告
-                String report = String.format(
-                        "━━━ 处理报告 ━━━\n" +
-                        "扫描文件总数：%d\n" +
-                        "支持处理文件：%d\n" +
-                        "跳过文件（产物/二进制）：%d\n" +
-                        "跳过文件（构建目录树）：%d\n" +
-                        "─── 处理结果 ───\n" +
-                        "处理成功：%d\n" +
-                        "处理失败：%d\n" +
-                        "内容跳过：%d\n" +
-                        "生成 Chunk 总数：%d\n" +
-                        "总耗时：%s\n" +
-                        "平均每文件：%.2f 秒",
-                        totalScanned, supportedCount, skippedCount, skippedDirFileCount,
-                        success.get(), failed.get(), skipped.get(),
-                        totalChunks.get(), timeStr, avgTimePerFile);
-                sendEvent(emitter, "report", report,
-                        new ProgressStats(totalFiles, totalFiles, success.get(), failed.get(),
-                                skipped.get(), "", 100, "0s"));
-
+                // 阶段 3：生成详细报告
+                generateReport(state, counters, startTime, emitter);
                 emitter.complete();
 
             } catch (Exception e) {
@@ -238,28 +92,227 @@ public class IngestionService {
         });
     }
 
-    /** 分批向量化并存储 */
+    /**
+     * 阶段 1：预处理遍历，统计文件数量，发送预处理事件。
+     *
+     * @return 预处理结果，如果无支持文件则返回 null（已发送 done 事件并关闭 emitter）
+     */
+    private IngestionState preprocessFiles(List<String> paths, SseEmitter emitter) throws IOException {
+        List<Path> allFiles = new ArrayList<>();
+        int totalScanned = 0;
+        int supportedCount = 0;
+        int skippedCount = 0;
+        int skippedDirFileCount = 0;
+
+        for (String pathStr : paths) {
+            Path rootPath = Path.of(pathStr);
+            if (!Files.exists(rootPath)) {
+                sendEvent(emitter, "error", "路径不存在: " + pathStr, null);
+                continue;
+            }
+            ScanResult scanResult = scanAllFiles(rootPath);
+            List<Path> files = scanResult.files();
+            skippedDirFileCount += scanResult.skippedDirFileCount();
+            totalScanned += files.size();
+            long sup = files.stream().filter(f -> splitterRouter.isSupported(f.getFileName().toString())).count();
+            supportedCount += (int) sup;
+            skippedCount += (int) (files.size() - sup);
+            allFiles.addAll(files);
+        }
+
+        List<Path> supportedFiles = allFiles.stream()
+                .filter(f -> splitterRouter.isSupported(f.getFileName().toString()))
+                .toList();
+
+        int totalFiles = supportedFiles.size();
+        if (totalFiles == 0) {
+            sendEvent(emitter, "done", "未发现可处理文件（扫描 " + totalScanned + " 个，全部跳过）",
+                    new ProgressStats(0, 0, 0, 0, 0, "", 100, "--"));
+            emitter.complete();
+            return null;
+        }
+
+        int totalSkipped = skippedCount + skippedDirFileCount;
+        sendEvent(emitter, "preprocess",
+                String.format("预处理完成：扫描 %d 个文件，支持 %d 个，跳过 %d 个（产物/二进制 %d + 构建目录 %d）",
+                        totalScanned, supportedCount, totalSkipped, skippedCount, skippedDirFileCount),
+                new ProgressStats(totalFiles, 0, 0, 0, totalSkipped, "", 0, "计算中..."));
+
+        return new IngestionState(supportedFiles, totalScanned, supportedCount, skippedCount, skippedDirFileCount);
+    }
+
+    /**
+     * 阶段 2：逐文件处理（切分 → 清洗 → 向量化存储），实时推送 SSE 进度。
+     */
+    private void processFiles(List<Path> supportedFiles, String projectName,
+                              SseEmitter emitter, ProcessingCounters counters, long startTime) throws IOException {
+        int totalFiles = supportedFiles.size();
+        long lastHeartbeatTime = startTime;
+
+        for (Path file : supportedFiles) {
+            int current = counters.processed.incrementAndGet();
+            String fileName = file.getFileName().toString();
+            int pct = (int) ((current * 100L) / totalFiles);
+            long elapsed = System.currentTimeMillis() - startTime;
+            String eta = calcEta(current, totalFiles, elapsed);
+
+            // 每 5 分钟发送心跳提醒
+            if (System.currentTimeMillis() - lastHeartbeatTime > 300_000) {
+                sendEvent(emitter, "heartbeat",
+                        String.format("仍在处理... 已完成 %d/%d (%d%%)，耗时 %s",
+                                current, totalFiles, pct, formatDuration(elapsed)),
+                        new ProgressStats(totalFiles, current, counters.success.get(), counters.failed.get(),
+                                counters.skipped.get(), fileName, pct, eta));
+                lastHeartbeatTime = System.currentTimeMillis();
+            }
+
+            sendEvent(emitter, "processing", fileName,
+                    new ProgressStats(totalFiles, current, counters.success.get(), counters.failed.get(),
+                            counters.skipped.get(), fileName, pct, eta));
+
+            try {
+                processSingleFile(file, projectName, emitter, counters, totalFiles, current, fileName, pct, eta);
+            } catch (Exception e) {
+                counters.failed.incrementAndGet();
+                sendEvent(emitter, "error", fileName + ": " + e.getMessage(),
+                        new ProgressStats(totalFiles, current, counters.success.get(), counters.failed.get(),
+                                counters.skipped.get(), fileName, pct, eta));
+                log.error("处理文件失败: {}", fileName, e);
+            }
+        }
+    }
+
+    /**
+     * 处理单个文件：切分 → 清洗 → 向量化存储。
+     */
+    private void processSingleFile(Path file, String projectName, SseEmitter emitter,
+                                    ProcessingCounters counters, int totalFiles,
+                                    int current, String fileName, int pct, String eta) throws IOException {
+        List<TextSegment> segments = splitterRouter.split(file, projectName);
+        if (segments.isEmpty()) {
+            counters.skipped.incrementAndGet();
+            sendEvent(emitter, "skip", "跳过（无有效内容）: " + fileName,
+                    new ProgressStats(totalFiles, current, counters.success.get(), counters.failed.get(),
+                            counters.skipped.get(), fileName, pct, eta));
+            return;
+        }
+
+        List<TextSegment> cleanedSegments = cleanSegments(segments, fileName);
+        if (cleanedSegments.isEmpty()) {
+            counters.skipped.incrementAndGet();
+            sendEvent(emitter, "skip", "跳过（清洗后无有效内容）: " + fileName,
+                    new ProgressStats(totalFiles, current, counters.success.get(), counters.failed.get(),
+                            counters.skipped.get(), fileName, pct, eta));
+            return;
+        }
+
+        injectChunkIndex(cleanedSegments);
+
+            int stored = embedAndStoreBatched(cleanedSegments, fileName);
+            if (stored == 0) {
+                counters.failed.incrementAndGet();
+                sendEvent(emitter, "error", fileName + ": 向量化存储全部失败（" + cleanedSegments.size() + " chunks）",
+                        new ProgressStats(totalFiles, current, counters.success.get(), counters.failed.get(),
+                                counters.skipped.get(), fileName, pct, eta));
+            } else {
+                counters.totalChunks.addAndGet(stored);
+                int filtered = segments.size() - cleanedSegments.size();
+                String filterMsg = filtered > 0 ? "，过滤 " + filtered + " 个噪声 chunk" : "";
+                boolean isPartialFailure = stored < cleanedSegments.size();
+                counters.success.incrementAndGet();
+                if (isPartialFailure) {
+                    sendEvent(emitter, "success",
+                            fileName + " (" + stored + "/" + cleanedSegments.size() + " chunks，部分失败" + filterMsg + ")",
+                            new ProgressStats(totalFiles, current, counters.success.get(), counters.failed.get(),
+                                    counters.skipped.get(), fileName, pct, eta));
+                } else {
+                    sendEvent(emitter, "success", fileName + " (" + stored + " chunks" + filterMsg + ")",
+                            new ProgressStats(totalFiles, current, counters.success.get(), counters.failed.get(),
+                                    counters.skipped.get(), fileName, pct, eta));
+                }
+            }
+    }
+
+    /**
+     * 阶段 3：生成并发送详细处理报告。
+     */
+    private void generateReport(IngestionState state, ProcessingCounters counters,
+                                long startTime, SseEmitter emitter) throws IOException {
+        int totalFiles = state.supportedFiles().size();
+        long totalTime = System.currentTimeMillis() - startTime;
+        String timeStr = formatDuration(totalTime);
+        double avgTimePerFile = totalFiles > 0 ? (totalTime / 1000.0) / totalFiles : 0;
+
+        String summary = String.format("处理完成！耗时 %s，成功 %d，失败 %d，跳过 %d，共 %d chunks",
+                timeStr, counters.success.get(), counters.failed.get(), counters.skipped.get(), counters.totalChunks.get());
+        sendEvent(emitter, "done", summary,
+                new ProgressStats(totalFiles, totalFiles, counters.success.get(), counters.failed.get(),
+                        counters.skipped.get(), "", 100, "0s"));
+
+        String report = String.format(
+                "━━━ 处理报告 ━━━\n" +
+                "扫描文件总数：%d\n" +
+                "支持处理文件：%d\n" +
+                "跳过文件（产物/二进制）：%d\n" +
+                "跳过文件（构建目录树）：%d\n" +
+                "─── 处理结果 ───\n" +
+                "处理成功：%d\n" +
+                "处理失败：%d\n" +
+                "内容跳过：%d\n" +
+                "生成 Chunk 总数：%d\n" +
+                "总耗时：%s\n" +
+                "平均每文件：%.2f 秒",
+                state.totalScanned(), state.supportedCount(), state.skippedCount(), state.skippedDirFileCount(),
+                counters.success.get(), counters.failed.get(), counters.skipped.get(),
+                counters.totalChunks.get(), timeStr, avgTimePerFile);
+        sendEvent(emitter, "report", report,
+                new ProgressStats(totalFiles, totalFiles, counters.success.get(), counters.failed.get(),
+                        counters.skipped.get(), "", 100, "0s"));
+    }
+
+    /**
+     * 分批向量化并存储。
+     * 将嵌入和存储分离：先统一嵌入，再逐批存储；存储失败时逐条重试，
+     * 避免对已成功存储的 segment 重复嵌入。
+     */
     private int embedAndStoreBatched(List<TextSegment> segments, String fileName) {
         int stored = 0;
         for (int i = 0; i < segments.size(); i += BATCH_SIZE) {
             int end = Math.min(i + BATCH_SIZE, segments.size());
             List<TextSegment> batch = segments.subList(i, end);
+
+            // 步骤 1：统一嵌入
+            List<Embedding> embeddings;
             try {
-                var response = embeddingModel.embedAll(batch);
-                List<Embedding> embeddings = response.content();
+                embeddings = embeddingModel.embedAll(batch).content();
+            } catch (Exception e) {
+                log.error("批量嵌入失败 (batch {}-{}): {} - {}", i, end, fileName, e.getMessage());
+                // 嵌入失败：逐条嵌入+存储
+                for (int j = 0; j < batch.size(); j++) {
+                    try {
+                        Embedding emb = embeddingModel.embed(batch.get(j)).content();
+                        embeddingStore.add(emb, batch.get(j));
+                        stored++;
+                    } catch (Exception ex) {
+                        log.warn("单条嵌入失败 (index {}): {} - {}", i + j, fileName, ex.getMessage());
+                    }
+                }
+                continue;
+            }
+
+            // 步骤 2：尝试批量存储
+            try {
                 embeddingStore.addAll(embeddings, batch);
                 stored += batch.size();
             } catch (Exception e) {
-                log.error("批量向量化失败 (batch {}-{}): {} - {}", i, end, fileName, e.getMessage());
-                // 降级：逐条向量化并存储，避免重复向量化已成功的部分
+                log.error("批量存储失败 (batch {}-{}): {} - {}", i, end, fileName, e.getMessage());
+                // 存储失败：逐条存储（嵌入已完成，不再重复嵌入）
                 for (int j = 0; j < batch.size(); j++) {
-                    TextSegment segment = batch.get(j);
                     try {
-                        Embedding emb = embeddingModel.embed(segment).content();
-                        embeddingStore.add(emb, segment);
+                        embeddingStore.add(embeddings.get(j), batch.get(j));
                         stored++;
                     } catch (Exception ex) {
-                        log.warn("单条向量化失败 (index {}): {} - {}", i + j, fileName, ex.getMessage());
+                        log.warn("单条存储失败 (index {}): {} - {}", i + j, fileName, ex.getMessage());
                     }
                 }
             }
@@ -295,10 +348,11 @@ public class IngestionService {
 
             // 1. 过滤超短无意义文本（阈值从配置读取）
             //    代码和 Markdown 类型放宽：保留短方法/短内容，仅过滤纯标点
+            String logSafeText = text.replace("\n", "\\n").replace("\r", "\\r");
             if (text.length() < noiseMinLength) {
                 if ("code".equals(type) || "markdown".equals(type)) {
                     if (PAT_PURE_PUNCT.matcher(text).matches()) {
-                        log.debug("过滤纯标点短文本 [{}]: '{}'", fileName, text);
+                        log.debug("过滤纯标点短文本 [{}]: '{}'", fileName, logSafeText);
                         filterShort++;
                         continue;
                     }
@@ -306,35 +360,35 @@ public class IngestionService {
                     cleaned.add(segment);
                     continue;
                 }
-                log.debug("过滤短文本 [{}]: '{}'", fileName, text);
+                log.debug("过滤短文本 [{}]: '{}'", fileName, logSafeText);
                 filterShort++;
                 continue;
             }
 
             // 2. 过滤纯大写字母+下划线+数字的水印/字体名
             if (PAT_UPPER_UNDERSCORE.matcher(text).matches()) {
-                log.debug("过滤水印/字体名 [{}]: '{}'", fileName, text);
+                log.debug("过滤水印/字体名 [{}]: '{}'", fileName, logSafeText);
                 filterWatermark++;
                 continue;
             }
 
             // 3. 过滤纯数字（页码），仅在 filter_pure_numbers 启用时
             if (filterPureNumbers && PAT_PURE_DIGITS.matcher(text).matches()) {
-                log.debug("过滤纯数字/页码 [{}]: '{}'", fileName, text);
+                log.debug("过滤纯数字/页码 [{}]: '{}'", fileName, logSafeText);
                 filterDigit++;
                 continue;
             }
 
             // 3b. 过滤纯 URL
             if (PAT_PURE_URL.matcher(text).matches()) {
-                log.debug("过滤纯 URL [{}]: '{}'", fileName, text);
+                log.debug("过滤纯 URL [{}]: '{}'", fileName, logSafeText);
                 filterWatermark++;
                 continue;
             }
 
             // 3c. 过滤纯标点符号/空白
             if (PAT_PURE_PUNCT.matcher(text).matches()) {
-                log.debug("过滤纯标点 [{}]: '{}'", fileName, text);
+                log.debug("过滤纯标点 [{}]: '{}'", fileName, logSafeText);
                 filterWatermark++;
                 continue;
             }
@@ -415,7 +469,7 @@ public class IngestionService {
 
     /**
      * 为 segments 注入 chunk_index 和 total_chunks，用于保证检索时的文档逻辑顺序。
-     * 将自增索引写入 Metadata 的 chunk_index 字段。
+     * 保留切分器设置的原始 start_line / end_line，仅新增 chunk_index 和 total_chunks 字段。
      * 注意：此方法会就地修改传入列表中的元素（替换 TextSegment），调用方需确保列表可变。
      */
     private void injectChunkIndex(List<TextSegment> segments) {
@@ -423,12 +477,28 @@ public class IngestionService {
         for (int i = 0; i < total; i++) {
             TextSegment segment = segments.get(i);
             var meta = new dev.langchain4j.data.document.Metadata(segment.metadata().toMap());
-            meta.put("start_line", String.valueOf(i + 1));
-            meta.put("end_line", String.valueOf(i + 1));
             meta.put("chunk_index", String.valueOf(i));
             meta.put("total_chunks", String.valueOf(total));
             segments.set(i, TextSegment.from(segment.text(), meta));
         }
+    }
+
+    /** 入库流程共享状态 */
+    private record IngestionState(
+            List<Path> supportedFiles,
+            int totalScanned,
+            int supportedCount,
+            int skippedCount,
+            int skippedDirFileCount
+    ) {}
+
+    /** 处理计数器 */
+    private static class ProcessingCounters {
+        final AtomicInteger processed = new AtomicInteger(0);
+        final AtomicInteger success = new AtomicInteger(0);
+        final AtomicInteger failed = new AtomicInteger(0);
+        final AtomicInteger skipped = new AtomicInteger(0);
+        final AtomicInteger totalChunks = new AtomicInteger(0);
     }
 
     /** 扫描所有文件（不过滤），用于预处理统计 */
