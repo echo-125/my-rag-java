@@ -14,6 +14,7 @@ const App = {
     pendingText: '',
     currentSources: [], // 对话当前的引用来源
     ingestStartTime: null, // 用于计算入库 ETA
+    currentReIngestProject: null, // 当前重新入库的项目
   },
 
   utils: {
@@ -78,6 +79,7 @@ const App = {
     App.state.currentTab = tabName;
     if (tabName === 'dashboard') App.dashboard.refresh();
     if (tabName === 'chat') App.chat.loadModelList();
+    if (tabName === 'ingestion') App.ingestion.loadProjects();
     if (tabName === 'settings') { App.settings.rag.load(); App.settings.llm.load(); App.settings.embed.load(); }
   },
 
@@ -330,59 +332,201 @@ const App = {
 
   // ==================== 多步入库工作流 ====================
   ingestion: {
+    /** 从后端加载已持久化的项目列表 */
+    async loadProjects() {
+      try {
+        const resp = await fetch('/api/project-configs');
+        if (!resp.ok) return;
+        const projects = await resp.json();
+        const container = document.getElementById('projectList');
+        container.innerHTML = '';
+        for (const p of projects) {
+          // 获取 chunk 数量
+          let chunkCount = 0;
+          try {
+            const countResp = await fetch(`/api/ingestion/chunks/${encodeURIComponent(p.name)}/count`);
+            if (countResp.ok) {
+              const data = await countResp.json();
+              chunkCount = data.count || 0;
+            }
+          } catch (e) {}
+
+          const idx = App.state.projectIndex++;
+          const statusBadge = p.status === 'completed'
+            ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">已入库</span>'
+            : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">待入库</span>';
+          container.insertAdjacentHTML('beforeend', `
+            <div id="proj-${idx}" class="project-item group flex flex-col bg-white border border-gray-200 p-3 rounded-lg shadow-sm" data-id="${p.id}" data-name="${App.utils.escHtml(p.name)}" data-path="${App.utils.escHtml(p.path)}">
+              <div class="flex justify-between items-start">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <div class="text-sm font-semibold text-gray-800 truncate">${App.utils.escHtml(p.name)}</div>
+                    ${statusBadge}
+                  </div>
+                  <div class="text-xs text-gray-500 font-mono mt-1 break-all">${App.utils.escHtml(p.path)}</div>
+                  <div class="text-xs text-gray-400 mt-1">${chunkCount} chunks</div>
+                </div>
+              </div>
+              <div class="flex gap-2 mt-2 pt-2 border-t border-gray-100">
+                <button onclick="App.ingestion.viewProject('${p.id}')" class="flex-1 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs rounded-md transition-colors font-medium">详情</button>
+                ${p.status === 'completed' ? `<button onclick="App.ingestion.reIngest('${p.id}', '${App.utils.escHtml(p.name)}', '${App.utils.escHtml(p.path)}')" class="flex-1 py-1.5 bg-primary hover:bg-primary-hover text-white text-xs rounded-md transition-colors font-medium">重新入库</button>` : ''}
+                <button onclick="App.ingestion.deleteProject('${p.id}', '${App.utils.escHtml(p.name)}')" class="py-1.5 px-2 text-gray-400 hover:text-red-500 hover:bg-red-50 text-xs rounded-md transition-colors" title="删除">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>
+              </div>
+            </div>
+          `);
+        }
+        // 空状态提示
+        const hint = document.getElementById('emptyProjectHint');
+        if (hint) hint.classList.toggle('hidden', projects.length > 0);
+
+        // 入库按钮始终保持禁用，只有 addProject() 会临时启用
+        const ingestBtn = document.getElementById('mainIngestBtn');
+        if (ingestBtn) {
+          ingestBtn.disabled = true;
+          ingestBtn.textContent = '开始入库';
+          ingestBtn.onclick = null;
+        }
+      } catch (e) {
+        console.error('加载项目列表失败:', e);
+      }
+    },
+
     getProjects() {
       return Array.from(document.querySelectorAll('#projectList .project-item')).map(row => ({
         name: row.dataset.name, path: row.dataset.path
       }));
     },
-    addProject() {
-      const name = document.getElementById('projectName').value.trim();
-      const path = document.getElementById('projectPath').value.trim();
-      if (!name || !path) return App.utils.toast('请输入名称和绝对路径', 'warning');
-      const idx = App.state.projectIndex++;
-      document.getElementById('projectList').insertAdjacentHTML('beforeend', `
-        <div id="proj-${idx}" class="project-item group flex flex-col bg-white border border-gray-200 p-3 rounded-lg shadow-sm" data-name="${App.utils.escHtml(name)}" data-path="${App.utils.escHtml(path)}">
-          <div class="flex justify-between items-start">
-            <div><div class="text-sm font-semibold text-gray-800">${App.utils.escHtml(name)}</div><div class="text-xs text-gray-500 font-mono mt-1 break-all">${App.utils.escHtml(path)}</div></div>
-            <button onclick="document.getElementById('proj-${idx}').remove()" class="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
-          </div>
-        </div>
-      `);
-      document.getElementById('projectName').value = ''; document.getElementById('projectPath').value = '';
-    },
-    setStep(stepNum) {
-      [1, 2, 3].forEach(i => {
-        const dom = document.getElementById('step-' + (i===1?'scan':i===2?'select':'process'));
-        const nav = document.getElementById('nav-step' + i);
-        if(i === stepNum) {
-          dom.classList.remove('opacity-0', 'pointer-events-none');
-          nav.classList.replace('text-gray-400', 'text-primary');
-          nav.querySelector('span').classList.replace('bg-gray-100', 'bg-primary/10');
-        } else {
-          dom.classList.add('opacity-0', 'pointer-events-none');
+
+    /** 添加项目（持久化到后端，同时触发右侧入库流程） */
+    async addProject() {
+      const nameEl = document.getElementById('projectName');
+      const pathEl = document.getElementById('projectPath');
+      const name = nameEl.value.trim();
+      const path = pathEl.value.trim();
+
+      if (!name) {
+        nameEl.focus();
+        nameEl.classList.add('border-red-400');
+        setTimeout(() => nameEl.classList.remove('border-red-400'), 2000);
+        return App.utils.toast('请输入项目名称', 'warning');
+      }
+      if (!path) {
+        pathEl.focus();
+        pathEl.classList.add('border-red-400');
+        setTimeout(() => pathEl.classList.remove('border-red-400'), 2000);
+        return App.utils.toast('请输入绝对路径', 'warning');
+      }
+
+      // 检测重复路径
+      const existing = document.querySelectorAll('#projectList .project-item');
+      for (const item of existing) {
+        if (item.dataset.path === path) {
+          return App.utils.toast('该路径已添加过，请勿重复添加', 'warning');
         }
-      });
+      }
+
+      try {
+        const resp = await fetch('/api/project-configs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, path })
+        });
+        if (!resp.ok) throw new Error('保存失败');
+        App.utils.toast('项目已添加，准备入库...', 'success');
+        nameEl.value = '';
+        pathEl.value = '';
+
+        // 不立即加载项目列表，等入库完成后再加载
+        // 触发右侧入库流程
+        this.startScanForProject(name, path);
+      } catch (e) {
+        App.utils.toast('添加失败: ' + e.message, 'error');
+      }
     },
-    async startScan() {
-      const projects = this.getProjects();
-      if(projects.length === 0) return App.utils.toast('请在左侧添加项目后重试', 'warning');
+
+    /** 删除项目（同时清除 chunks） */
+    async deleteProject(id, name) {
+      if (!confirm(`确定删除项目 "${name}" 及其所有 chunks？`)) return;
+
+      try {
+        await fetch(`/api/ingestion/chunks/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        await fetch(`/api/project-configs/${id}`, { method: 'DELETE' });
+        App.utils.toast(`项目 "${name}" 已删除`, 'success');
+        this.loadProjects();
+      } catch (e) {
+        App.utils.toast('删除失败: ' + e.message, 'error');
+      }
+    },
+
+    /** 查看项目详情 */
+    async viewProject(id) {
+      try {
+        const resp = await fetch(`/api/project-configs/${id}`);
+        if (!resp.ok) throw new Error('获取详情失败');
+        const project = await resp.json();
+
+        // 获取 chunk 数量
+        let chunkCount = 0;
+        try {
+          const countResp = await fetch(`/api/ingestion/chunks/${encodeURIComponent(project.name)}/count`);
+          if (countResp.ok) {
+            const data = await countResp.json();
+            chunkCount = data.count || 0;
+          }
+        } catch (e) {}
+
+        const statusText = project.status === 'completed' ? '已入库' : '待入库';
+        const statusColor = project.status === 'completed' ? 'text-green-600' : 'text-yellow-600';
+        const ingestedTime = project.ingestedAt ? new Date(project.ingestedAt).toLocaleString() : '--';
+        const createdTime = new Date(project.createdAt).toLocaleString();
+
+        const modal = document.getElementById('projectDetailModal');
+        document.getElementById('detailProjectName').textContent = project.name;
+        document.getElementById('detailProjectPath').textContent = project.path;
+        document.getElementById('detailProjectStatus').textContent = statusText;
+        document.getElementById('detailProjectStatus').className = `font-medium ${statusColor}`;
+        document.getElementById('detailProjectChunks').textContent = chunkCount;
+        document.getElementById('detailProjectIngestedAt').textContent = ingestedTime;
+        document.getElementById('detailProjectCreatedAt').textContent = createdTime;
+        document.getElementById('detailProjectDescription').textContent = project.description || '暂无简介';
+
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+      } catch (e) {
+        App.utils.toast('获取详情失败: ' + e.message, 'error');
+      }
+    },
+
+    /** 关闭项目详情模态框 */
+    closeProjectDetail() {
+      const modal = document.getElementById('projectDetailModal');
+      modal.classList.add('hidden');
+      modal.style.display = 'none';
+    },
+    async reIngest(id, name, path) {
+      if (!confirm(`确定重新入库项目 "${name}"？将先清空旧数据再重新处理。`)) return;
+
+      this.currentReIngestProject = { id, name, path };
+      this.setStep(2);
 
       const btn = document.getElementById('mainIngestBtn');
-      btn.disabled = true; btn.textContent = '校验中...';
+      btn.disabled = true; btn.textContent = '扫描中...';
 
       try {
         const resp = await fetch('/api/ingestion/scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projects })
+          body: JSON.stringify({ projects: [{ name, path }] })
         });
-        if (!resp.ok) throw new Error('扫描失败 HTTP ' + resp.status);
+        if (!resp.ok) throw new Error('扫描失败');
         const data = await resp.json();
-        if (!data.success) throw new Error('扫描失败');
 
         const exts = data.extensions || [];
         if (exts.length === 0) {
           App.utils.toast('未发现可处理的文件', 'warning');
+          this.setStep(1);
           return;
         }
 
@@ -394,11 +538,184 @@ const App = {
           </label>
         `).join('');
 
-        this.setStep(2);
+        btn.textContent = '确认入库';
+        btn.disabled = false;
+        btn.onclick = () => this.executeReIngest();
       } catch (e) {
-        App.utils.toast('校验失败: ' + e.message, 'error');
+        App.utils.toast('扫描失败: ' + e.message, 'error');
+        this.setStep(1);
+        btn.textContent = '开始入库';
+        btn.disabled = true;
+      }
+    },
+
+    /** 执行重新入库 */
+    async executeReIngest() {
+      const project = this.currentReIngestProject;
+      if (!project) return;
+
+      const checkedBoxes = document.querySelectorAll('#fileTypeContainer input:checked');
+      if (checkedBoxes.length === 0) return App.utils.toast('请至少勾选一种文件类型', 'warning');
+      const selectedExts = Array.from(checkedBoxes).map(cb => cb.value);
+
+      this.setStep(3);
+      document.getElementById('ingestLog').innerHTML = '';
+      App.state.ingestStartTime = Date.now();
+
+      this.addLog('info', `清空 "${project.name}" 的旧数据...`);
+      try {
+        await fetch(`/api/ingestion/chunks/${encodeURIComponent(project.name)}`, { method: 'DELETE' });
+      } catch (e) {}
+
+      this.addLog('info', `开始入库，所选类型: ${selectedExts.join(', ')}`);
+
+      try {
+        const resp = await fetch('/api/ingestion/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projects: [{ name: project.name, path: project.path }], exts: selectedExts })
+        });
+        if (!resp.ok) throw new Error('入库请求失败');
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            const t = line.trim();
+            if (t.startsWith('data:')) {
+              try {
+                const data = JSON.parse(t.substring(5));
+                this.addLog(data.status || 'info', data.message || '');
+
+                if (data.current !== undefined && data.total !== undefined) {
+                  const pct = data.progressPercentage || Math.floor((data.current / data.total) * 100);
+                  const elapsed = (Date.now() - App.state.ingestStartTime) / 1000;
+                  const speed = data.current / elapsed;
+                  const remainTime = speed > 0 ? (data.total - data.current) / speed : 0;
+
+                  document.getElementById('ingestBar').style.width = pct + '%';
+                  document.getElementById('ingestPercent').textContent = pct + '%';
+                  document.getElementById('ingestCount').textContent = `${data.current} / ${data.total}`;
+                  document.getElementById('ingestETA').textContent = remainTime > 0 ? `${Math.floor(remainTime)}s` : '--';
+                  if (data.currentFile) document.getElementById('ingestFile').textContent = data.currentFile;
+                }
+
+                if (data.status === 'done') {
+                  document.getElementById('ingestStatus').textContent = '入库完成';
+                  document.getElementById('ingestStatus').className = 'font-bold text-green-600';
+                  App.utils.toast('入库完成！', 'success');
+                  this.loadProjects();
+                }
+              } catch (e) {}
+            }
+          }
+        }
+      } catch(e) {
+        this.addLog('error', e.message);
+        App.utils.toast('入库失败: ' + e.message, 'error');
       } finally {
-        btn.textContent = '重新校验'; btn.disabled = false;
+        const btn = document.getElementById('mainIngestBtn');
+        btn.textContent = '开始入库';
+        btn.disabled = true;
+        btn.onclick = null;
+        this.currentReIngestProject = null;
+        this.loadProjects();
+      }
+    },
+
+    /** 清空全部知识库 */
+    async clearAllChunks() {
+      const confirmText = prompt('此操作将清空所有 chunks 数据，且无法恢复。\n请输入"确认"继续：');
+      if (confirmText !== '确认') return;
+
+      try {
+        const resp = await fetch('/api/ingestion/chunks', { method: 'DELETE' });
+        if (!resp.ok) throw new Error('清空失败');
+        const data = await resp.json();
+        App.utils.toast(`已清空 ${data.deleted} 个 chunks`, 'success');
+        this.loadProjects();
+      } catch (e) {
+        App.utils.toast('清空失败: ' + e.message, 'error');
+      }
+    },
+    setStep(stepNum) {
+      [1, 2, 3].forEach(i => {
+        const dom = document.getElementById('step-' + (i===1?'scan':i===2?'select':'process'));
+        const nav = document.getElementById('nav-step' + i);
+        const circle = nav.querySelector('span');
+
+        // 先重置
+        dom.classList.add('opacity-0', 'pointer-events-none');
+        nav.style.color = '';
+        circle.style.backgroundColor = '';
+        circle.innerHTML = i;
+
+        if(i < stepNum) {
+          // 已完成：绿色勾
+          nav.style.color = '#16a34a';
+          circle.style.backgroundColor = '#dcfce7';
+          circle.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>';
+        } else if(i === stepNum) {
+          // 当前步骤：蓝色高亮
+          dom.classList.remove('opacity-0', 'pointer-events-none');
+          nav.style.color = '#10a37f';
+          circle.style.backgroundColor = '#d1fae5';
+        }
+        // else: 灰色（默认）
+      });
+    },
+    async startScan() {
+      // 此函数保留但不再直接使用，改为 startScanForProject
+      App.utils.toast('请通过"添加项目"按钮添加新项目', 'info');
+    },
+
+    /** 扫描指定项目并触发右侧入库流程 */
+    async startScanForProject(name, path) {
+      this.currentReIngestProject = { name, path };
+      this.setStep(2);
+
+      const btn = document.getElementById('mainIngestBtn');
+      btn.disabled = true; btn.textContent = '扫描中...';
+
+      try {
+        const resp = await fetch('/api/ingestion/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projects: [{ name, path }] })
+        });
+        if (!resp.ok) throw new Error('扫描失败');
+        const data = await resp.json();
+
+        const exts = data.extensions || [];
+        if (exts.length === 0) {
+          App.utils.toast('未发现可处理的文件', 'warning');
+          this.setStep(1);
+          btn.textContent = '开始入库'; btn.disabled = false;
+          return;
+        }
+
+        const container = document.getElementById('fileTypeContainer');
+        container.innerHTML = exts.map(e => `
+          <label class="flex items-center gap-2 p-2.5 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors bg-white shadow-sm">
+            <input type="checkbox" value="${e.ext}" checked class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary/20">
+            <span class="text-sm font-medium text-gray-700">${e.ext} <span class="text-xs text-gray-400 font-normal">(${e.count} 文件)</span></span>
+          </label>
+        `).join('');
+
+        btn.textContent = '确认入库'; btn.disabled = false;
+        btn.onclick = () => this.executeReIngest();
+      } catch (e) {
+        App.utils.toast('扫描失败: ' + e.message, 'error');
+        this.setStep(1);
+        btn.textContent = '开始入库'; btn.disabled = true;
       }
     },
     async confirmTypesAndProcess() {
@@ -410,6 +727,18 @@ const App = {
       this.setStep(3);
       document.getElementById('ingestLog').innerHTML = '';
       App.state.ingestStartTime = Date.now();
+
+      // 入库前清空各项目的旧 chunks
+      this.addLog('info', '清空旧数据...');
+      for (const project of projects) {
+        try {
+          const resp = await fetch(`/api/ingestion/chunks/${encodeURIComponent(project.name)}`, { method: 'DELETE' });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.deleted > 0) this.addLog('info', `已清空 "${project.name}" 的 ${data.deleted} 个旧 chunks`);
+          }
+        } catch (e) {}
+      }
 
       this.addLog('info', `开始入库，所选类型: ${selectedExts.join(', ')}`);
 
@@ -803,6 +1132,9 @@ const App = {
     document.getElementById('embedModal')?.addEventListener('click', function (e) {
       if (e.target === e.currentTarget) App.settings.embed.closeModal();
     });
+    document.getElementById('projectDetailModal')?.addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) App.ingestion.closeProjectDetail();
+    });
 
     // 侧边栏展开/收起
     const sidebar = document.getElementById('sidebar');
@@ -810,6 +1142,9 @@ const App = {
       const isExpanded = localStorage.getItem('sidebarExpanded') === 'true';
       if (isExpanded) sidebar.classList.add('expanded');
     }
+
+    // 预加载项目列表
+    App.ingestion.loadProjects();
   },
 
   toggleSidebar() {
