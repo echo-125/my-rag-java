@@ -28,3 +28,9 @@ logs/
 ### Temp ###
 *.tmp
 *.bak
+
+### Playwright ###
+.playwright-mcp/
+
+### Mimocode ###
+.mimocode/
