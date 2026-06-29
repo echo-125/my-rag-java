@@ -1,5 +1,9 @@
 package com.he.service;
 
+import com.he.entity.ChatMessageEntity;
+import com.he.entity.ChatMessageRepository;
+import com.he.entity.ChatSessionEntity;
+import com.he.entity.ChatSessionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -7,40 +11,36 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 对话上下文管理服务（内存实现）。
+ * 对话上下文管理服务（内存 + DB 双写）。
  * <p>
- * 使用 {@link ConcurrentHashMap} 维护每个 session 的历史消息队列，
- * 通过滑动窗口策略保留最近 N 轮对话（默认 10 轮 = 20 条消息）。
- * <p>
- * 数据结构兼容 Spring AI 的 {@link Message} 接口，
- * 存储的条目为 {@link UserMessage} 和 {@link AssistantMessage} 交替排列。
- * <p>
- * <b>设计决策</b>：本服务手动管理消息列表，不依赖 LangChain4j 的 ChatMemory
- * （因为生成层使用 Spring AI）也不依赖 Spring AI 的 InMemoryChatMemory
- * （因为检索层使用 LangChain4j），保持体系结构清晰、零耦合。
+ * 内存缓存保证低延迟，DB 持久化保证重启不丢失。
+ * 读取时优先命中内存缓存，未命中则从 DB 加载。
  */
 @Service
 public class ConversationService {
 
     private static final Logger log = LoggerFactory.getLogger(ConversationService.class);
 
-    /** 每个会话保留的最大对话轮数（一轮 = 一问 + 一答） */
     private final int maxRounds;
+    private final ChatSessionRepository sessionRepo;
+    private final ChatMessageRepository messageRepo;
 
-    /** 会话存储：sessionId → 历史消息队列（线程安全） */
+    /** 内存缓存：sessionId → 历史消息队列 */
     private final ConcurrentHashMap<String, LinkedList<Message>> sessions = new ConcurrentHashMap<>();
 
-    public ConversationService(@Value("${app.conversation.max-rounds:10}") int maxRounds) {
+    public ConversationService(
+            @Value("${app.conversation.max-rounds:10}") int maxRounds,
+            ChatSessionRepository sessionRepo,
+            ChatMessageRepository messageRepo) {
         this.maxRounds = maxRounds;
+        this.sessionRepo = sessionRepo;
+        this.messageRepo = messageRepo;
         log.info("ConversationService 初始化完成，最大轮数: {}", maxRounds);
     }
 
@@ -56,14 +56,17 @@ public class ConversationService {
 
     /**
      * 获取指定会话的历史消息列表（不可修改的副本）。
-     *
-     * @param sessionId 会话 ID
-     * @return 历史消息列表，若会话不存在则返回空列表
+     * 优先从内存加载，未命中则从 DB 加载到内存。
      */
     public List<Message> getHistory(String sessionId) {
         LinkedList<Message> queue = sessions.get(sessionId);
         if (queue == null) {
-            return List.of();
+            // 内存没有 → 从 DB 加载
+            queue = loadFromDb(sessionId);
+            if (queue != null) {
+                sessions.put(sessionId, queue);
+            }
+            return queue != null ? List.copyOf(queue) : List.of();
         }
         synchronized (queue) {
             return List.copyOf(queue);
@@ -71,80 +74,141 @@ public class ConversationService {
     }
 
     /**
-     * 向指定会话添加一条用户消息。
+     * 向指定会话添加一条用户消息（双写）。
      */
     public void addUserMessage(String sessionId, String content) {
-        addMessage(sessionId, new UserMessage(content));
+        addMessage(sessionId, "user", new UserMessage(content), content);
     }
 
     /**
-     * 向指定会话添加一条 AI 助手消息。
+     * 向指定会话添加一条 AI 助手消息（双写）。
      */
     public void addAssistantMessage(String sessionId, String content) {
-        addMessage(sessionId, new AssistantMessage(content));
+        addMessage(sessionId, "assistant", new AssistantMessage(content), content);
     }
 
     /**
-     * 向指定会话添加一条消息，超出轮数时自动移除最早的消息对。
+     * 获取所有会话列表（按更新时间倒序）。
      */
-    private void addMessage(String sessionId, Message message) {
-        LinkedList<Message> queue = sessions.computeIfAbsent(sessionId, k -> {
-            log.debug("自动创建会话: {}", sessionId);
-            return new LinkedList<>();
-        });
-
-        synchronized (queue) {
-            queue.addLast(message);
-            // 滑动窗口裁剪：保留最近 maxRounds 轮 = maxRounds * 2 条消息
-            int maxMessages = maxRounds * 2;
-            while (queue.size() > maxMessages) {
-                queue.removeFirst();
-            }
-        }
+    public List<ChatSessionEntity> listSessions() {
+        return sessionRepo.findAllByOrderByUpdatedAtDesc();
     }
 
     /**
-     * 清空指定会话的全部历史。
+     * 获取会话的所有消息。
      */
-    public void clearSession(String sessionId) {
-        LinkedList<Message> queue = sessions.get(sessionId);
-        if (queue != null) {
-            synchronized (queue) {
-                queue.clear();
-            }
-            log.debug("清空会话: {}", sessionId);
-        }
+    public List<ChatMessageEntity> getSessionMessages(UUID sessionId) {
+        return messageRepo.findBySessionIdOrderByCreatedAtAsc(sessionId);
     }
 
     /**
-     * 删除指定会话。
+     * 删除会话及其所有消息（DB + 内存）。
      */
-    public void removeSession(String sessionId) {
-        sessions.remove(sessionId);
-        log.debug("删除会话: {}", sessionId);
+    @Transactional
+    public void deleteSession(UUID sessionId) {
+        messageRepo.deleteBySessionId(sessionId);
+        sessionRepo.deleteById(sessionId);
+        sessions.remove(sessionId.toString());
+        log.info("删除会话: {}", sessionId);
     }
 
     /**
-     * 获取当前活跃会话数量。
-     */
-    public int getActiveSessionCount() {
-        return sessions.size();
-    }
-
-    /**
-     * 判断会话是否存在。
+     * 判断会话是否存在（DB 或内存）。
      */
     public boolean hasSession(String sessionId) {
-        return sessions.containsKey(sessionId);
+        if (sessions.containsKey(sessionId)) return true;
+        try {
+            return sessionRepo.findById(UUID.fromString(sessionId)).isPresent();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
      * 获取或创建会话——若存在则返回，否则创建新会话。
      */
     public String getOrCreateSession(String sessionId) {
-        if (sessionId != null && sessions.containsKey(sessionId)) {
+        if (sessionId != null && hasSession(sessionId)) {
             return sessionId;
         }
         return createSession();
+    }
+
+    // ─── 内部方法 ───
+
+    private void addMessage(String sessionId, String role, Message message, String rawContent) {
+        LinkedList<Message> queue = sessions.computeIfAbsent(sessionId, k -> {
+            log.debug("自动创建会话: {}", sessionId);
+            return new LinkedList<>();
+        });
+
+        // 1. 写内存
+        synchronized (queue) {
+            queue.addLast(message);
+            int maxMessages = maxRounds * 2;
+            while (queue.size() > maxMessages) {
+                queue.removeFirst();
+            }
+        }
+
+        // 2. 写 DB（异步容错）
+        try {
+            UUID sessionUuid = UUID.fromString(sessionId);
+
+            // 首条用户消息 → 创建会话并设标题
+            if ("user".equals(role) && queue.size() == 1) {
+                ChatSessionEntity session = new ChatSessionEntity();
+                session.setId(sessionUuid);
+                String title = rawContent.length() > 30 ? rawContent.substring(0, 30) + "..." : rawContent;
+                session.setTitle(title);
+                sessionRepo.save(session);
+            }
+
+            ChatMessageEntity entity = new ChatMessageEntity();
+            entity.setSessionId(sessionUuid);
+            entity.setRole(role);
+            entity.setContent(rawContent);
+            messageRepo.save(entity);
+
+            // 更新会话的 updatedAt
+            sessionRepo.findById(sessionUuid).ifPresent(s -> {
+                s.setUpdatedAt(java.time.Instant.now());
+                sessionRepo.save(s);
+            });
+        } catch (Exception e) {
+            log.warn("消息持久化失败（内存已写入）: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 从 DB 加载会话历史到内存。
+     */
+    private LinkedList<Message> loadFromDb(String sessionId) {
+        try {
+            UUID sessionUuid = UUID.fromString(sessionId);
+            List<ChatMessageEntity> messages = messageRepo.findBySessionIdOrderByCreatedAtAsc(sessionUuid);
+            if (messages.isEmpty()) return null;
+
+            LinkedList<Message> queue = new LinkedList<>();
+            for (ChatMessageEntity entity : messages) {
+                if ("user".equals(entity.getRole())) {
+                    queue.add(new UserMessage(entity.getContent()));
+                } else if ("assistant".equals(entity.getRole())) {
+                    queue.add(new AssistantMessage(entity.getContent()));
+                }
+            }
+
+            // 滑动窗口裁剪
+            int maxMessages = maxRounds * 2;
+            while (queue.size() > maxMessages) {
+                queue.removeFirst();
+            }
+
+            log.debug("从 DB 加载会话 {} 的 {} 条消息", sessionId, queue.size());
+            return queue;
+        } catch (Exception e) {
+            log.warn("从 DB 加载会话失败: {}", e.getMessage());
+            return null;
+        }
     }
 }

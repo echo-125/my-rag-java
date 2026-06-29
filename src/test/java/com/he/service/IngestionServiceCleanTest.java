@@ -1,5 +1,7 @@
 package com.he.service;
 
+import com.he.entity.DocumentChunkStatsRepository;
+import com.he.entity.ProjectConfigRepository;
 import com.he.splitter.FileSplitterRouter;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
@@ -33,12 +35,16 @@ class IngestionServiceCleanTest {
     private EmbeddingStore<TextSegment> embeddingStore;
     @Mock
     private RagConfigService ragConfigService;
+    @Mock
+    private DocumentChunkStatsRepository chunkStatsRepo;
+    @Mock
+    private ProjectConfigRepository projectConfigRepo;
 
     private IngestionService service;
 
     @BeforeEach
     void setUp() {
-        service = new IngestionService(splitterRouter, embeddingModel, embeddingStore, ragConfigService);
+        service = new IngestionService(splitterRouter, embeddingModel, embeddingStore, ragConfigService, chunkStatsRepo, projectConfigRepo);
         // 默认配置：噪声过滤开启，最小长度 30
         lenient().when(ragConfigService.getBoolean("enable_noise_filter", true)).thenReturn(true);
         lenient().when(ragConfigService.getInt("noise_min_length", 30)).thenReturn(30);

@@ -46,7 +46,13 @@ const App = {
       }
       throw lastError;
     },
-    genId() { return crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2); },
+    genId() {
+      if (crypto?.randomUUID) return crypto.randomUUID();
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
+    },
     showLoading(text) {
       const overlay = document.getElementById('loadingOverlay');
       const textEl = document.getElementById('loadingText');
@@ -78,13 +84,103 @@ const App = {
     });
     App.state.currentTab = tabName;
     if (tabName === 'dashboard') App.dashboard.refresh();
-    if (tabName === 'chat') App.chat.loadModelList();
+    if (tabName === 'chat') { App.chat.loadModelList(); App.chat.loadSessions(); }
     if (tabName === 'ingestion') App.ingestion.loadProjects();
     if (tabName === 'settings') { App.settings.rag.load(); App.settings.llm.load(); App.settings.embed.load(); }
   },
 
   // ==================== 对话功能 ====================
   chat: {
+    // ─── 会话管理 ───
+    async loadSessions() {
+      try {
+        const resp = await App.utils.fetchWithRetry('/api/sessions');
+        if (!resp.ok) return;
+        const sessions = await resp.json();
+        const list = document.getElementById('sessionList');
+        if (!list) return;
+        if (sessions.length === 0) {
+          list.innerHTML = '<div class="text-[11px] text-gray-400 px-2 py-2">暂无历史会话</div>';
+          return;
+        }
+        list.innerHTML = sessions.map(s => {
+          const isActive = s.id === App.state.currentSessionId;
+          const time = new Date(s.updatedAt).toLocaleString('zh-CN', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+          return `<div class="session-item group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors ${isActive ? 'bg-primary/10 text-primary' : 'hover:bg-gray-100 text-gray-600'}" onclick="App.chat.switchSession('${s.id}')" title="${App.utils.escHtml(s.title)}">
+            <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+            <span class="flex-1 truncate sidebar-label opacity-0 w-0 transition-all duration-300">${App.utils.escHtml(s.title)}</span>
+            <span class="sidebar-label text-[10px] text-gray-400 opacity-0 w-0 transition-all duration-300 flex-shrink-0">${time}</span>
+            <button onclick="event.stopPropagation();App.chat.deleteSession('${s.id}')" class="sidebar-label opacity-0 w-0 transition-all duration-300 flex-shrink-0 text-gray-400 hover:text-red-500 p-0.5 rounded hover:bg-red-50" title="删除">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+          </div>`;
+        }).join('');
+      } catch (e) { console.warn('加载会话列表失败', e); }
+    },
+    async switchSession(sessionId) {
+      App.state.currentSessionId = sessionId;
+      const container = document.getElementById('chatContainer');
+      container.innerHTML = '';
+      document.getElementById('chatWelcome')?.remove();
+      try {
+        const resp = await App.utils.fetchWithRetry(`/api/sessions/${sessionId}/messages`);
+        if (!resp.ok) throw new Error('加载失败');
+        const messages = await resp.json();
+        for (const msg of messages) {
+          if (msg.role === 'user') {
+            container.insertAdjacentHTML('beforeend', `
+              <div class="flex justify-end animate-slide-in mb-6">
+                <div class="msg-user rounded-2xl px-5 py-3.5 max-w-[80%] shadow-sm">
+                  <div class="text-[15px] leading-relaxed whitespace-pre-wrap">${App.utils.escHtml(msg.content)}</div>
+                </div>
+              </div>`);
+          } else if (msg.role === 'assistant') {
+            const wrapperId = 'ai-msg-' + App.utils.genId();
+            container.insertAdjacentHTML('beforeend', `
+              <div id="${wrapperId}" class="flex justify-start animate-fade-in mb-8">
+                <div class="flex gap-4 w-full">
+                  <div class="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-white flex-shrink-0 mt-1 shadow-md shadow-primary/20">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                  </div>
+                  <div class="msg-ai flex-1 max-w-[calc(100%-3rem)]">
+                    <div class="text-sm font-semibold text-gray-800 mb-1">智能助手</div>
+                    <div class="ai-response prose prose-sm w-full"></div>
+                  </div>
+                </div>
+              </div>`);
+            const responseDiv = document.querySelector(`#${wrapperId} .ai-response`);
+            responseDiv.innerHTML = marked.parse(msg.content);
+            responseDiv.querySelectorAll('pre code').forEach(block => {
+              if (!block.classList.contains('language-mermaid') && window.hljs) hljs.highlightElement(block);
+            });
+          }
+        }
+        const messagesEl = document.getElementById('chatMessages');
+        messagesEl.scrollTo({ top: messagesEl.scrollHeight });
+        this.loadSessions();
+      } catch (e) {
+        App.utils.toast('加载会话失败: ' + e.message, 'error');
+      }
+    },
+    async deleteSession(sessionId) {
+      if (!confirm('确定删除此会话？')) return;
+      try {
+        await App.utils.fetchWithRetry(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+        if (App.state.currentSessionId === sessionId) {
+          App.state.currentSessionId = null;
+          App.chat.clear();
+        }
+        this.loadSessions();
+        App.utils.toast('会话已删除', 'info', 2000);
+      } catch (e) { App.utils.toast('删除失败', 'error'); }
+    },
+    newChat() {
+      App.state.currentSessionId = null;
+      const container = document.getElementById('chatContainer');
+      container.innerHTML = `<div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in"><div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10"><svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div><h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2><p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p></div>`;
+      this.loadSessions();
+    },
+    // ─── 模型列表 ───
     async loadModelList() {
       try {
         const resp = await App.utils.fetchWithRetry('/api/models');
@@ -198,6 +294,7 @@ const App = {
       } finally {
         document.getElementById('sendBtn').disabled = false;
         messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+        this.loadSessions();
       }
     },
     scheduleRender(responseDiv, text) {
@@ -242,6 +339,7 @@ const App = {
     clear() {
       App.state.currentSessionId = null;
       document.getElementById('chatContainer').innerHTML = `<div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in"><div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10"><svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div><h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2><p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p></div>`;
+      this.loadSessions();
       App.utils.toast('对话已清空', 'info', 2000);
     }
   },
@@ -1141,6 +1239,7 @@ const App = {
     if (sidebar) {
       const isExpanded = localStorage.getItem('sidebarExpanded') === 'true';
       if (isExpanded) sidebar.classList.add('expanded');
+      App._syncSessionListVisibility();
     }
 
     // 预加载项目列表
@@ -1152,6 +1251,19 @@ const App = {
     if (!sidebar) return;
     sidebar.classList.toggle('expanded');
     localStorage.setItem('sidebarExpanded', sidebar.classList.contains('expanded'));
+    this._syncSessionListVisibility();
+  },
+  _syncSessionListVisibility() {
+    const sidebar = document.getElementById('sidebar');
+    const wrap = document.getElementById('sessionListWrap');
+    if (!sidebar || !wrap) return;
+    const expanded = sidebar.classList.contains('expanded');
+    if (expanded) {
+      wrap.classList.remove('hidden');
+      App.chat.loadSessions();
+    } else {
+      wrap.classList.add('hidden');
+    }
   },
 };
 document.addEventListener('DOMContentLoaded', App.init);
