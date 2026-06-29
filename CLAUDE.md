@@ -102,7 +102,7 @@ Embedding 模型配置：name、provider（ollama/openai）、baseUrl、modelNam
 ## 项目结构
 
 ```
-src/main/java/com/insolu/rag/
+src/main/java/com/he/
   InsoluRagApplication.java              启动类
   config/
     LangChain4jConfig.java               EmbeddingModel（DatabaseBackedEmbeddingModel 懒加载）+ PgVectorEmbeddingStore Bean
@@ -115,6 +115,7 @@ src/main/java/com/insolu/rag/
     DashboardController.java             Dashboard 统计 + 最近问答（JdbcTemplate 查询）
     ProjectConfigController.java         项目配置 CRUD
     RagConfigController.java             RAG 切分/清洗配置 GET/PUT（带白名单+值校验）
+    GlobalExceptionHandler.java          全局异常处理
   entity/
     DocumentChunkStatsRepository.java    JdbcTemplate 统计查询（count/countByLanguage/countByProject）
     LlmConfigEntity.java                 LLM 配置实体（含 ApiFormat 枚举）
@@ -140,6 +141,14 @@ src/main/java/com/insolu/rag/
     RegexSplitter.java                   正则切分（JS/TS/Python/Go 各有独立模式）
     FileSplitterRouter.java              按扩展名路由切分器 + Tika 文档解析 + 元数据注入
     SemanticStructureSplitter.java       三级降级文档切分器（标题切分 → 语义切分 → 递归兜底，适用于 PDF/Word）
+    CSharpSplitter.java                  C# 代码切分
+    CssSplitter.java                     CSS 代码切分
+    HtmlSplitter.java                    HTML 代码切分
+    QmlSplitter.java                     QML 代码切分
+    VueSplitter.java                     Vue 单文件组件切分
+    ExcelStructuredParser.java           Excel 结构化解析
+    PptxStructuredParser.java            PPTX 结构化解析
+    SplitterUtils.java                   切分工具类
 
 src/main/resources/
   application.yml                        Spring Boot + 数据库 + 日志配置
@@ -148,13 +157,21 @@ src/main/resources/
     index.html                           单页面前端（4 标签页：对话/仪表盘/文档入库/设置）
     lib/                                 echarts.min.js, mermaid.min.js, marked.min.js, tailwind.min.css
 
-src/test/java/com/insolu/rag/
+src/test/java/com/he/
+  analysis/
+    ChunkQualityAnalyzer.java            Chunk 质量分析
+  service/
+    IngestionServiceCleanTest.java       入库服务集成测试
+    LlmConfigServiceTest.java            LLM 配置服务单元测试
   splitter/
     RegexSplitterTest.java               Go/Python/JS/TS 切分测试
     JavaAstDocumentSplitterTest.java     Java AST 切分测试
     SemanticStructureSplitterTest.java   三级降级切分器测试（标题/语义/递归/元数据/余弦相似度）
-  service/
-    LlmConfigServiceTest.java            LLM 配置服务单元测试
+    CSharpSplitterTest.java              C# 切分测试
+    CssSplitterTest.java                 CSS 切分测试
+    HtmlSplitterTest.java                HTML 切分测试
+    QmlSplitterTest.java                 QML 切分测试
+    VueSplitterTest.java                 Vue 单文件组件切分测试
 ```
 
 ## API 端点

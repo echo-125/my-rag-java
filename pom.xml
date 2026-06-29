@@ -11,10 +11,10 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.insolu</groupId>
-    <artifactId>insolu-rag-java</artifactId>
+    <groupId>com.he</groupId>
+    <artifactId>my-rag-java</artifactId>
     <version>0.0.1</version>
-    <name>insolu-rag-java</name>
+    <name>my-rag-java</name>
     <description>个人知识库与代码库 RAG 系统（LangChain4j + Spring AI 双框架）</description>
 
     <properties>

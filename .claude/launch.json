@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "insolu-rag",
+      "name": "my-rag-java",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd D:/HeXin/insolu/insolu-rag-java && mvn spring-boot:run -Dspring-boot.run.arguments=\"--server.port=18080\""],
+      "runtimeArgs": ["-c", "cd D:/HeXin/insolu/my-rag-java && mvn spring-boot:run -Dspring-boot.run.arguments=\"--server.port=18080\""],
       "port": 18080
     }
   ]

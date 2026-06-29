@@ -1,14 +1,14 @@
 -- ============================================================
--- InsoLu RAG 数据库初始化脚本
+-- MY RAG 数据库初始化脚本
 -- 执行方式: psql -U postgres -f src/main/resources/db/init.sql
 -- ============================================================
 
 -- 1. 创建数据库（如不存在）
-SELECT 'CREATE DATABASE insolu_rag'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'insolu_rag')\gexec
+SELECT 'CREATE DATABASE my_rag'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'my_rag')\gexec
 
--- 2. 连接到 insolu_rag 数据库
-\c insolu_rag
+-- 2. 连接到 my_rag 数据库
+\c my_rag
 
 -- 3. 安装 pgvector 扩展
 CREATE EXTENSION IF NOT EXISTS vector;
