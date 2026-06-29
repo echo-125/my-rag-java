@@ -44,19 +44,22 @@ public class IngestionService {
     private final RagConfigService ragConfigService;
     private final com.he.entity.DocumentChunkStatsRepository chunkStatsRepo;
     private final com.he.entity.ProjectConfigRepository projectConfigRepo;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     public IngestionService(FileSplitterRouter splitterRouter,
                             EmbeddingModel embeddingModel,
                             EmbeddingStore<TextSegment> embeddingStore,
                             RagConfigService ragConfigService,
                             com.he.entity.DocumentChunkStatsRepository chunkStatsRepo,
-                            com.he.entity.ProjectConfigRepository projectConfigRepo) {
+                            com.he.entity.ProjectConfigRepository projectConfigRepo,
+                            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
         this.splitterRouter = splitterRouter;
         this.embeddingModel = embeddingModel;
         this.embeddingStore = embeddingStore;
         this.ragConfigService = ragConfigService;
         this.chunkStatsRepo = chunkStatsRepo;
         this.projectConfigRepo = projectConfigRepo;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     /**
@@ -217,6 +220,7 @@ public class IngestionService {
         injectChunkIndex(cleanedSegments);
 
             int stored = embedAndStoreBatched(cleanedSegments, fileName);
+            updateSearchVector(cleanedSegments);
             if (stored == 0) {
                 counters.failed.incrementAndGet();
                 sendEvent(emitter, "error", fileName + ": 向量化存储全部失败（" + cleanedSegments.size() + " chunks）",
@@ -326,6 +330,30 @@ public class IngestionService {
             }
         }
         return stored;
+    }
+
+    /**
+     * 批量更新 search_vector 列（用于 BM25 全文检索）。
+     * 入库完成后调用，将 text 内容转为 tsvector 索引。
+     */
+    private void updateSearchVector(List<TextSegment> segments) {
+        if (segments.isEmpty()) return;
+        String sql = "UPDATE document_chunks SET search_vector = to_tsvector('simple', coalesce(?, '')) " +
+                     "WHERE text = ? AND search_vector IS NULL";
+        try {
+            jdbcTemplate.batchUpdate(sql, new org.springframework.jdbc.core.BatchPreparedStatementSetter() {
+                @Override
+                public void setValues(java.sql.PreparedStatement ps, int i) throws java.sql.SQLException {
+                    String text = segments.get(i).text();
+                    ps.setString(1, text);
+                    ps.setString(2, text);
+                }
+                @Override
+                public int getBatchSize() { return segments.size(); }
+            });
+        } catch (Exception e) {
+            log.warn("批量更新 search_vector 失败（不影响向量检索）: {}", e.getMessage());
+        }
     }
 
     /**
@@ -487,6 +515,8 @@ public class IngestionService {
             var meta = new dev.langchain4j.data.document.Metadata(segment.metadata().toMap());
             meta.put("chunk_index", String.valueOf(i));
             meta.put("total_chunks", String.valueOf(total));
+            // 注意：不需要在此处 put "text" 元数据，
+            // PgVectorEmbeddingStore 会自动将 segment.text() 存入表的 text 列
             segments.set(i, TextSegment.from(segment.text(), meta));
         }
     }
@@ -757,6 +787,7 @@ public class IngestionService {
 
                         injectChunkIndex(cleanedSegments);
                         int stored = embedAndStoreBatched(cleanedSegments, fileName);
+                        updateSearchVector(cleanedSegments);
 
                         if (stored == 0) {
                             counters.failed.incrementAndGet();

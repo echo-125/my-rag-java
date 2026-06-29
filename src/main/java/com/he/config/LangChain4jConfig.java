@@ -35,7 +35,12 @@ public class LangChain4jConfig {
         return new DatabaseBackedEmbeddingModel(embeddingConfigService);
     }
 
-    /** 元数据列定义 */
+    /**
+     * 元数据列定义。
+     * 注意：不要在此处声明 "text TEXT"，因为 document_chunks 表已有固有 text 列
+     * （由 LangChain4j PgVectorEmbeddingStore 自动管理，存储 segment 原文）。
+     * 重复声明可能导致列冲突或写入异常。
+     */
     private static final List<String> METADATA_COLUMN_DEFS = List.of(
             "project_name TEXT", "file_path TEXT", "language TEXT", "type TEXT",
             "signature TEXT", "start_line TEXT", "end_line TEXT",
@@ -79,7 +84,7 @@ public class LangChain4jConfig {
                 .columnDefinitions(METADATA_COLUMN_DEFS)
                 .build();
 
-        return PgVectorEmbeddingStore.builder()
+        var store = PgVectorEmbeddingStore.builder()
                 .host(host)
                 .port(port)
                 .database(database)
@@ -90,11 +95,26 @@ public class LangChain4jConfig {
                 .createTable(true)
                 .metadataStorageConfig(metadataConfig)
                 .build();
+
+        // PgVectorEmbeddingStore 创建/验证表之后，确保 search_vector 列存在（用于 BM25 全文检索）。
+        // 此操作不能在 verifyOrRecreateTable() 中做，因为首次启动或维度变更时表在那时还不存在
+        //（verifyOrRecreateTable 中 DROP 后，由 PgVectorEmbeddingStore 重建，不包含 search_vector）。
+        try {
+            jdbcTemplate.execute("ALTER TABLE IF EXISTS " + table + " ADD COLUMN IF NOT EXISTS search_vector tsvector");
+        } catch (Exception e) {
+            log.warn("添加 search_vector 列失败（BM25 检索将不可用）: {}", e.getMessage());
+        }
+
+        return store;
     }
 
     /**
      * 启动时校验 document_chunks 表的向量维度是否与配置一致。
      * 不一致时自动重建表，避免入库时出现 "expected X dimensions, not Y" 错误。
+     * <p>
+     * 注意：此方法不负责添加 search_vector 列——表在此时可能尚未创建（首次启动）
+     * 或刚被 DROP（维度变更），ALTER TABLE 会静默失败。search_vector 列的添加
+     * 在 PgVectorEmbeddingStore Bean 创建完成后执行。
      */
     private void verifyOrRecreateTable(String table, int expectedDimension, JdbcTemplate jdbc) {
         try {

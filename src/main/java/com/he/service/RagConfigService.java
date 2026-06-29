@@ -34,6 +34,7 @@ public class RagConfigService {
             // ── 检索参数 ──
             "max_results",
             "min_score",
+            "enable_bm25",
             // ── 噪声过滤 ──
             "enable_noise_filter",
             "noise_min_length",
@@ -65,6 +66,7 @@ public class RagConfigService {
                     new RagConfigEntity("filter_pure_numbers", "true", "是否过滤纯数字（如页码）"),
                     new RagConfigEntity("max_results",       "5",    "检索最大结果数"),
                     new RagConfigEntity("min_score",         "0.5",  "检索最低相似度分数"),
+                    new RagConfigEntity("enable_bm25",      "true", "是否启用 BM25 关键词混合检索"),
                     new RagConfigEntity("system_prompt",     "你是一个代码和文档助手。根据以下检索到的相关代码/文档片段回答用户问题。\n如果检索结果中没有相关信息，请如实说明。", "系统提示词")
             );
 

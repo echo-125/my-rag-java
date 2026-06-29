@@ -3,17 +3,22 @@ package com.he.service;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.rag.content.Content;
+import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
 import dev.langchain4j.rag.query.Query;
 import dev.langchain4j.store.embedding.EmbeddingStore;
+import com.he.retriever.PgVectorKeywordContentRetriever;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -36,6 +41,8 @@ public class RagChatService {
     private final LlmConfigService llmConfigService;
     private final RagConfigService ragConfigService;
     private final ConversationService conversationService;
+    private final JdbcTemplate jdbcTemplate;
+    private final String pgTable;
 
     /** 缓存各模型的流式支持标记，避免每次聊天查 DB */
     private final Map<UUID, Boolean> streamingCache = new ConcurrentHashMap<>();
@@ -45,28 +52,42 @@ public class RagChatService {
                           SpringAiModelRouterService modelRouter,
                           LlmConfigService llmConfigService,
                           RagConfigService ragConfigService,
-                          ConversationService conversationService) {
+                          ConversationService conversationService,
+                          JdbcTemplate jdbcTemplate,
+                          @Value("${pgvector.table}") String pgTable) {
         this.embeddingStore = embeddingStore;
         this.embeddingModel = embeddingModel;
         this.modelRouter = modelRouter;
         this.llmConfigService = llmConfigService;
         this.ragConfigService = ragConfigService;
         this.conversationService = conversationService;
+        this.jdbcTemplate = jdbcTemplate;
+        this.pgTable = pgTable;
     }
 
     /**
-     * 每次调用时动态从配置读取 maxResults / minScore 构建 Retriever。
-     * EmbeddingStore 和 EmbeddingModel 是单例 Bean，Builder 开销极低，无需缓存。
+     * 构建检索器：支持纯向量 / 向量+BM25 混合检索（RRF 融合）。
      */
-    private EmbeddingStoreContentRetriever buildRetriever() {
+    private ContentRetriever buildRetriever() {
         int maxResults = ragConfigService.getInt("max_results", 5);
         double minScore = ragConfigService.getDouble("min_score", 0.5);
-        return EmbeddingStoreContentRetriever.builder()
+        boolean bm25Enabled = ragConfigService.getBoolean("enable_bm25", true);
+
+        EmbeddingStoreContentRetriever vectorRetriever = EmbeddingStoreContentRetriever.builder()
                 .embeddingStore(embeddingStore)
                 .embeddingModel(embeddingModel)
                 .maxResults(maxResults)
                 .minScore(minScore)
                 .build();
+
+        if (!bm25Enabled) {
+            return vectorRetriever;
+        }
+
+        PgVectorKeywordContentRetriever keywordRetriever =
+                new PgVectorKeywordContentRetriever(jdbcTemplate, pgTable, maxResults);
+
+        return new HybridContentRetriever(vectorRetriever, keywordRetriever, maxResults);
     }
 
     /** 清除流式支持缓存（测试连接后调用） */
@@ -370,6 +391,104 @@ public class RagChatService {
                        .replace("\n", "\\n")
                        .replace("\r", "\\r")
                        .replace("\t", "\\t") + "\"";
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  混合检索器：向量 + BM25，RRF 融合
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * 混合检索器：同时调用向量检索和 BM25 关键词检索，使用 RRF 融合排序。
+     */
+    private static class HybridContentRetriever implements ContentRetriever {
+        private final EmbeddingStoreContentRetriever vectorRetriever;
+        private final PgVectorKeywordContentRetriever keywordRetriever;
+        private final int maxResults;
+        /**
+         * RRF 融合常数 k。
+         * 标准 RRF（Reciprocal Rank Fusion）论文推荐值 k=60。
+         * 值越小，排名靠前的结果权重越高；值越大，排名靠后的结果也有显著贡献。
+         * 若需调优，可提取为 rag_config 配置项。
+         */
+        private static final int RRF_K = 60;
+
+        HybridContentRetriever(EmbeddingStoreContentRetriever vectorRetriever,
+                               PgVectorKeywordContentRetriever keywordRetriever,
+                               int maxResults) {
+            this.vectorRetriever = vectorRetriever;
+            this.keywordRetriever = keywordRetriever;
+            this.maxResults = maxResults;
+        }
+
+        @Override
+        public List<Content> retrieve(Query query) {
+            List<Content> vectorResults;
+            List<Content> keywordResults;
+
+            try {
+                vectorResults = vectorRetriever.retrieve(query);
+            } catch (Exception e) {
+                log.warn("向量检索失败: {}", e.getMessage());
+                vectorResults = List.of();
+            }
+
+            try {
+                keywordResults = keywordRetriever.retrieve(query);
+            } catch (Exception e) {
+                log.warn("BM25 检索失败: {}", e.getMessage());
+                keywordResults = List.of();
+            }
+
+            if (vectorResults.isEmpty() && keywordResults.isEmpty()) {
+                return List.of();
+            }
+            if (keywordResults.isEmpty()) {
+                return vectorResults;
+            }
+            if (vectorResults.isEmpty()) {
+                return keywordResults;
+            }
+
+            // RRF 融合：score = Σ 1/(k + rank_i)
+            Map<String, Double> rrfScores = new LinkedHashMap<>();
+            Map<String, Content> contentMap = new LinkedHashMap<>();
+
+            int rank = 0;
+            for (Content c : vectorResults) {
+                String key = contentKey(c);
+                rrfScores.merge(key, 1.0 / (RRF_K + rank++), Double::sum);
+                contentMap.putIfAbsent(key, c);
+            }
+            rank = 0;
+            for (Content c : keywordResults) {
+                String key = contentKey(c);
+                rrfScores.merge(key, 1.0 / (RRF_K + rank++), Double::sum);
+                contentMap.putIfAbsent(key, c);
+            }
+
+            log.debug("RRF 融合: 向量 {} 条, BM25 {} 条, 融合后 {} 条",
+                    vectorResults.size(), keywordResults.size(), rrfScores.size());
+
+            return rrfScores.entrySet().stream()
+                    .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                    .limit(maxResults)
+                    .map(e -> contentMap.get(e.getKey()))
+                    .toList();
+        }
+
+        /**
+         * 生成 Content 的去重 key（file_path + type + signature）。
+         * 加入 type 字段防止 class/method/constructor 的 signature 值巧合相同导致误合并。
+         */
+        private static String contentKey(Content content) {
+            TextSegment seg = content.textSegment();
+            String filePath = seg.metadata().getString("file_path");
+            String type = seg.metadata().getString("type");
+            String signature = seg.metadata().getString("signature");
+            return (filePath != null ? filePath : "") + "|"
+                 + (type != null ? type : "") + "|"
+                 + (signature != null ? signature : "");
+        }
     }
 }
 

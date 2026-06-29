@@ -39,12 +39,14 @@ class IngestionServiceCleanTest {
     private DocumentChunkStatsRepository chunkStatsRepo;
     @Mock
     private ProjectConfigRepository projectConfigRepo;
+    @Mock
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     private IngestionService service;
 
     @BeforeEach
     void setUp() {
-        service = new IngestionService(splitterRouter, embeddingModel, embeddingStore, ragConfigService, chunkStatsRepo, projectConfigRepo);
+        service = new IngestionService(splitterRouter, embeddingModel, embeddingStore, ragConfigService, chunkStatsRepo, projectConfigRepo, jdbcTemplate);
         // 默认配置：噪声过滤开启，最小长度 30
         lenient().when(ragConfigService.getBoolean("enable_noise_filter", true)).thenReturn(true);
         lenient().when(ragConfigService.getInt("noise_min_length", 30)).thenReturn(30);
