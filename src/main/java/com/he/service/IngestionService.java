@@ -42,15 +42,21 @@ public class IngestionService {
     private final EmbeddingModel embeddingModel;
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final RagConfigService ragConfigService;
+    private final com.he.entity.DocumentChunkStatsRepository chunkStatsRepo;
+    private final com.he.entity.ProjectConfigRepository projectConfigRepo;
 
     public IngestionService(FileSplitterRouter splitterRouter,
                             EmbeddingModel embeddingModel,
                             EmbeddingStore<TextSegment> embeddingStore,
-                            RagConfigService ragConfigService) {
+                            RagConfigService ragConfigService,
+                            com.he.entity.DocumentChunkStatsRepository chunkStatsRepo,
+                            com.he.entity.ProjectConfigRepository projectConfigRepo) {
         this.splitterRouter = splitterRouter;
         this.embeddingModel = embeddingModel;
         this.embeddingStore = embeddingStore;
         this.ragConfigService = ragConfigService;
+        this.chunkStatsRepo = chunkStatsRepo;
+        this.projectConfigRepo = projectConfigRepo;
     }
 
     /**
@@ -592,7 +598,56 @@ public class IngestionService {
     ) {}
 
     // ═══════════════════════════════════════════════════
-    //  新增：扫描校验端点
+    //  知识库清理
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * 清空指定项目的所有 chunks。
+     * @return 删除的 chunk 数量
+     */
+    public int clearChunksByProject(String projectName) {
+        int deleted = chunkStatsRepo.deleteByProjectName(projectName);
+        log.info("清空项目 '{}' 的 chunks: 删除 {} 条", projectName, deleted);
+        return deleted;
+    }
+
+    /**
+     * 清空整个知识库（所有项目的 chunks）。
+     * @return 删除的 chunk 数量
+     */
+    public int clearAllChunks() {
+        int deleted = chunkStatsRepo.deleteAll();
+        log.info("清空全部知识库: 删除 {} 条 chunks", deleted);
+        return deleted;
+    }
+
+    /**
+     * 获取指定项目的 chunk 数量。
+     */
+    public long countChunksByProject(String projectName) {
+        return chunkStatsRepo.countByProjectName(projectName);
+    }
+
+    /**
+     * 入库完成后更新项目状态。
+     * @param projectName 项目名称
+     * @param fileCount 处理的文件数
+     * @param chunkCount 生成的 chunk 数
+     */
+    public void markProjectCompleted(String projectName, int fileCount, int chunkCount) {
+        projectConfigRepo.findByName(projectName).ifPresent(entity -> {
+            entity.setStatus("completed");
+            entity.setIngestedAt(java.time.Instant.now());
+            // 生成简单简介
+            String desc = String.format("已入库 %d 个文件，生成 %d 个文档块。", fileCount, chunkCount);
+            entity.setDescription(desc);
+            projectConfigRepo.save(entity);
+            log.info("项目 '{}' 状态更新为 completed", projectName);
+        });
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  扫描校验端点
     // ═══════════════════════════════════════════════════
 
     /**
@@ -724,6 +779,12 @@ public class IngestionService {
                         counters.success.get(), counters.failed.get(), counters.skipped.get(),
                         counters.totalChunks.get(), formatDuration(totalTime));
                 sendFilterEvent(emitter, "done", summary, totalFiles, totalFiles, "", "done");
+
+                // 更新项目状态为已完成
+                for (ProjectInfo project : projects) {
+                    markProjectCompleted(project.name(), counters.success.get(), counters.totalChunks.get());
+                }
+
                 emitter.complete();
 
             } catch (Exception e) {

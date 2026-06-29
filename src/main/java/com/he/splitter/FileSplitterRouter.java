@@ -139,11 +139,12 @@ public class FileSplitterRouter {
         return splitAndInjectMetadata(doc, projectName, filePath, "text");
     }
 
-    /** 判断文件是否支持处理（按扩展名白名单，单一决策源：注册表 + 语言映射） */
+    /** 判断文件是否支持处理（按扩展名白名单，单一决策源：注册表 + 语言映射 + 文档类型） */
     public boolean isSupported(String fileName) {
         String ext = getExtension(fileName.toLowerCase(Locale.ROOT));
         if (EXCLUDED_EXTENSIONS.contains(ext)) return false;
-        return SPLITTER_REGISTRY.containsKey(ext) || LANGUAGE_MAP.containsKey(ext);
+        return SPLITTER_REGISTRY.containsKey(ext) || LANGUAGE_MAP.containsKey(ext)
+                || DOCUMENT_TEXT_EXTENSIONS.contains(ext);
     }
 
     /** 根据文件扩展名推断语言 */

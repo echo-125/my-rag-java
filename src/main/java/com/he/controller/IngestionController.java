@@ -85,5 +85,39 @@ public class IngestionController {
      * 项目信息。
      */
     public record ProjectInfo(String name, String path) {}
+
+    // ═══════════════════════════════════════════════════
+    //  知识库清理端点
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * DELETE /api/ingestion/chunks/{projectName}
+     * 清空指定项目的所有 chunks。
+     */
+    @DeleteMapping("/chunks/{projectName}")
+    public Map<String, Object> clearChunksByProject(@PathVariable String projectName) {
+        int deleted = ingestionService.clearChunksByProject(projectName);
+        return Map.of("success", true, "deleted", deleted, "project", projectName);
+    }
+
+    /**
+     * DELETE /api/ingestion/chunks
+     * 清空整个知识库（所有项目的 chunks）。
+     */
+    @DeleteMapping("/chunks")
+    public Map<String, Object> clearAllChunks() {
+        int deleted = ingestionService.clearAllChunks();
+        return Map.of("success", true, "deleted", deleted);
+    }
+
+    /**
+     * GET /api/ingestion/chunks/{projectName}/count
+     * 获取指定项目的 chunk 数量。
+     */
+    @GetMapping("/chunks/{projectName}/count")
+    public Map<String, Object> countChunks(@PathVariable String projectName) {
+        long count = ingestionService.countChunksByProject(projectName);
+        return Map.of("project", projectName, "count", count);
+    }
 }
 
