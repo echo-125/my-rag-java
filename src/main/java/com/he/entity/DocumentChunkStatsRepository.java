@@ -41,5 +41,31 @@ public class DocumentChunkStatsRepository {
                 "SELECT file_path, COUNT(*) AS count " +
                 "FROM document_chunks GROUP BY file_path");
     }
+
+    /**
+     * 按项目名删除所有 chunks。
+     * @return 删除的行数
+     */
+    public int deleteByProjectName(String projectName) {
+        return jdbc.update("DELETE FROM document_chunks WHERE project_name = ?", projectName);
+    }
+
+    /**
+     * 清空整个 document_chunks 表。
+     * @return 删除的行数
+     */
+    public int deleteAll() {
+        return jdbc.update("DELETE FROM document_chunks");
+    }
+
+    /**
+     * 统计指定项目的 chunks 数量。
+     */
+    public long countByProjectName(String projectName) {
+        Long result = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM document_chunks WHERE project_name = ?",
+                Long.class, projectName);
+        return result != null ? result : 0;
+    }
 }
 
