@@ -11,10 +11,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import com.he.controller.IngestionController.ProjectInfo;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
@@ -588,5 +590,172 @@ public class IngestionService {
             int progressPercentage,
             String estimatedRemainingTime
     ) {}
+
+    // ═══════════════════════════════════════════════════
+    //  新增：扫描校验端点
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * 扫描路径下的文件，按扩展名聚合统计（仅统计 isSupported 的文件）。
+     * 返回 Map&lt;扩展名, 数量&gt;，按数量降序排列。
+     */
+    public java.util.Map<String, Integer> scanExtensions(List<String> paths) throws IOException {
+        java.util.Map<String, Integer> extCounts = new java.util.TreeMap<>();
+
+        for (String pathStr : paths) {
+            Path rootPath = Path.of(pathStr);
+            if (!Files.exists(rootPath)) {
+                throw new IllegalArgumentException("路径不存在: " + pathStr);
+            }
+            ScanResult scanResult = scanAllFiles(rootPath);
+            for (Path file : scanResult.files()) {
+                String fileName = file.getFileName().toString();
+                if (splitterRouter.isSupported(fileName)) {
+                    String ext = getExtensionFromPath(fileName);
+                    extCounts.merge(ext, 1, Integer::sum);
+                }
+            }
+        }
+
+        // 按数量降序排列
+        return extCounts.entrySet().stream()
+                .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+                .collect(java.util.LinkedHashMap::new,
+                        (m, e) -> m.put(e.getKey(), e.getValue()),
+                        java.util.LinkedHashMap::putAll);
+    }
+
+    private String getExtensionFromPath(String fileName) {
+        int dot = fileName.lastIndexOf('.');
+        return dot >= 0 ? fileName.substring(dot) : "";
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  新增：带扩展名过滤的入库处理
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * 带扩展名过滤的入库流程，通过 SSE 推送前端期望的进度 JSON 格式。
+     * <p>
+     * SSE 数据格式: {@code {"current": N, "total": M, "currentFile": "xx.java", "status": "processing", "message": "..."}}
+     */
+    public void processWithFilter(List<ProjectInfo> projects, List<String> exts, SseEmitter emitter) {
+        Thread.startVirtualThread(() -> {
+            try {
+                // 1. 扫描并过滤文件
+                List<PathEntry> allSupportedFiles = new ArrayList<>();
+                for (ProjectInfo project : projects) {
+                    Path rootPath = Path.of(project.path());
+                    if (!Files.exists(rootPath)) {
+                        sendFilterEvent(emitter, "error", "路径不存在: " + project.path(), 0, 0, "", "error");
+                        continue;
+                    }
+                    ScanResult scanResult = scanAllFiles(rootPath);
+                    for (Path file : scanResult.files()) {
+                        String fileName = file.getFileName().toString();
+                        if (splitterRouter.isSupported(fileName)) {
+                            String ext = getExtensionFromPath(fileName);
+                            if (exts == null || exts.isEmpty() || exts.contains(ext)) {
+                                allSupportedFiles.add(new PathEntry(file, project.name()));
+                            }
+                        }
+                    }
+                }
+
+                int totalFiles = allSupportedFiles.size();
+                if (totalFiles == 0) {
+                    sendFilterEvent(emitter, "done", "未发现匹配的可处理文件", 0, 0, "", "done");
+                    emitter.complete();
+                    return;
+                }
+
+                sendFilterEvent(emitter, "info", "开始处理 " + totalFiles + " 个文件...", 0, totalFiles, "", "processing");
+
+                // 2. 逐文件处理
+                long startTime = System.currentTimeMillis();
+                ProcessingCounters counters = new ProcessingCounters();
+
+                for (PathEntry entry : allSupportedFiles) {
+                    int current = counters.processed.incrementAndGet();
+                    Path file = entry.path();
+                    String fileName = file.getFileName().toString();
+                    int pct = (int) ((current * 100L) / totalFiles);
+                    long elapsed = System.currentTimeMillis() - startTime;
+                    String eta = calcEta(current, totalFiles, elapsed);
+
+                    sendFilterEvent(emitter, "processing", fileName, current, totalFiles, fileName, "processing");
+
+                    try {
+                        List<TextSegment> segments = splitterRouter.split(file, entry.projectName());
+                        if (segments.isEmpty()) {
+                            counters.skipped.incrementAndGet();
+                            sendFilterEvent(emitter, "skip", "跳过（无有效内容）: " + fileName, current, totalFiles, fileName, "skip");
+                            continue;
+                        }
+
+                        List<TextSegment> cleanedSegments = cleanSegments(segments, fileName);
+                        if (cleanedSegments.isEmpty()) {
+                            counters.skipped.incrementAndGet();
+                            sendFilterEvent(emitter, "skip", "跳过（清洗后无有效内容）: " + fileName, current, totalFiles, fileName, "skip");
+                            continue;
+                        }
+
+                        injectChunkIndex(cleanedSegments);
+                        int stored = embedAndStoreBatched(cleanedSegments, fileName);
+
+                        if (stored == 0) {
+                            counters.failed.incrementAndGet();
+                            sendFilterEvent(emitter, "error", fileName + ": 向量化存储全部失败", current, totalFiles, fileName, "error");
+                        } else {
+                            counters.totalChunks.addAndGet(stored);
+                            counters.success.incrementAndGet();
+                            sendFilterEvent(emitter, "success", fileName + " (" + stored + " chunks)", current, totalFiles, fileName, "success");
+                        }
+                    } catch (Exception e) {
+                        counters.failed.incrementAndGet();
+                        sendFilterEvent(emitter, "error", fileName + ": " + e.getMessage(), current, totalFiles, fileName, "error");
+                        log.error("处理文件失败: {}", fileName, e);
+                    }
+                }
+
+                // 3. 完成
+                long totalTime = System.currentTimeMillis() - startTime;
+                String summary = String.format("处理完成！成功 %d，失败 %d，跳过 %d，共 %d chunks，耗时 %s",
+                        counters.success.get(), counters.failed.get(), counters.skipped.get(),
+                        counters.totalChunks.get(), formatDuration(totalTime));
+                sendFilterEvent(emitter, "done", summary, totalFiles, totalFiles, "", "done");
+                emitter.complete();
+
+            } catch (Exception e) {
+                log.error("入库过程异常", e);
+                try {
+                    sendFilterEvent(emitter, "error", "入库异常: " + e.getMessage(), 0, 0, "", "error");
+                    emitter.completeWithError(e);
+                } catch (IOException ignored) {}
+            }
+        });
+    }
+
+    /** 发送前端期望的进度事件格式 */
+    private void sendFilterEvent(SseEmitter emitter, String status, String message,
+                                  int current, int total, String currentFile, String msgType) throws IOException {
+        try {
+            var event = Map.of(
+                    "current", current,
+                    "total", total,
+                    "currentFile", currentFile != null ? currentFile : "",
+                    "status", status,
+                    "message", message != null ? message : "",
+                    "progressPercentage", total > 0 ? (int) ((current * 100L) / total) : 0,
+                    "estimatedRemainingTime", ""
+            );
+            emitter.send(SseEmitter.event().name("progress").data(event));
+        } catch (IllegalStateException e) {
+            log.warn("Emitter 状态异常，跳过发送: status={}, message={}", status, message);
+        }
+    }
+
+    /** 文件路径 + 所属项目名 */
+    private record PathEntry(Path path, String projectName) {}
 }
 

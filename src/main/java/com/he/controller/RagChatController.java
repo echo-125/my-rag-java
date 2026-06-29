@@ -41,9 +41,12 @@ public class RagChatController {
     }
 
     /**
-     * POST /api/chat/stream — 流式问答。
-     * SSE 格式：每行 {@code data: ...\n\n}，前端逐 token 拼接后 Markdown 渲染。
-     * 流结束后自动保存问答到 QA 历史。
+     * POST /api/chat/stream — 流式问答（带引用文献）。
+     * SSE 格式：
+     * <ul>
+     *   <li>第一个事件: {@code {"text":"","sources":[{"id":1,"name":"file.java","path":"/docs/file.java"}]}}</li>
+     *   <li>后续事件: {@code {"text":"token内容"}}</li>
+     * </ul>
      */
     @PostMapping(value = "/stream", produces = "text/event-stream;charset=UTF-8")
     public Flux<String> streamChat(@RequestBody ChatRequest request) {
@@ -60,11 +63,10 @@ public class RagChatController {
 
         AtomicInteger tokenCount = new AtomicInteger(0);
 
-        Flux<String> stream = ragChatService.chat(query, modelKey, sessionId)
+        Flux<String> stream = ragChatService.chatWithCitations(query, modelKey, sessionId)
                 .map(token -> {
-                    // Spring 的 produces="text/event-stream" 会自动包装每个元素为 SSE data 行
-                    // 上游 API 的 SSE 响应可能已经包含 "data: " 前缀，先剥掉
                     tokenCount.incrementAndGet();
+                    // 上游已经返回 JSON 格式，直接透传
                     return token.startsWith("data: ") ? token.substring(6) : token;
                 })
                 .doOnComplete(() -> {

@@ -360,21 +360,28 @@ const App = {
     async startScan() {
       const projects = this.getProjects();
       if(projects.length === 0) return App.utils.toast('请在左侧添加项目后重试', 'warning');
-      
+
       const btn = document.getElementById('mainIngestBtn');
       btn.disabled = true; btn.textContent = '校验中...';
 
       try {
-        // Mock Backend: /api/ingestion/scan 
-        // 传递 paths，后端返回有哪些后缀名以及对应数量
-        // const resp = await fetch('/api/ingestion/scan', { method:'POST', body: JSON.stringify({ projects }) });
-        
-        // 模拟后端返回的结果
-        await new Promise(r => setTimeout(r, 800)); 
-        const mockExts = [{ext:'.md', count:45}, {ext:'.java', count:120}, {ext:'.txt', count:12}, {ext:'.xml', count:34}];
-        
+        const resp = await fetch('/api/ingestion/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projects })
+        });
+        if (!resp.ok) throw new Error('扫描失败 HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error('扫描失败');
+
+        const exts = data.extensions || [];
+        if (exts.length === 0) {
+          App.utils.toast('未发现可处理的文件', 'warning');
+          return;
+        }
+
         const container = document.getElementById('fileTypeContainer');
-        container.innerHTML = mockExts.map(e => `
+        container.innerHTML = exts.map(e => `
           <label class="flex items-center gap-2 p-2.5 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors bg-white shadow-sm">
             <input type="checkbox" value="${e.ext}" checked class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary/20">
             <span class="text-sm font-medium text-gray-700">${e.ext} <span class="text-xs text-gray-400 font-normal">(${e.count} 文件)</span></span>
@@ -392,47 +399,65 @@ const App = {
       const checkedBoxes = document.querySelectorAll('#fileTypeContainer input:checked');
       if(checkedBoxes.length === 0) return App.utils.toast('请至少勾选一种文件类型', 'warning');
       const selectedExts = Array.from(checkedBoxes).map(cb => cb.value);
+      const projects = this.getProjects();
 
       this.setStep(3);
       document.getElementById('ingestLog').innerHTML = '';
       App.state.ingestStartTime = Date.now();
-      
+
       this.addLog('info', `开始入库，所选类型: ${selectedExts.join(', ')}`);
-      
+
       try {
-        // 请求后端真正的执行接口 (支持 SSE 流式返回进度)
-        // fetch('/api/ingestion/process', { method: 'POST', body: JSON.stringify({ projects, exts: selectedExts }) });
+        const resp = await fetch('/api/ingestion/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projects, exts: selectedExts })
+        });
+        if (!resp.ok) throw new Error('入库请求失败 HTTP ' + resp.status);
 
-        // 以下为前端模拟流式返回的进度
-        let total = 200, current = 0;
-        const interval = setInterval(() => {
-          current += Math.floor(Math.random() * 5) + 1;
-          if(current > total) current = total;
-          
-          // 渲染进度与 ETA
-          const pct = Math.floor((current/total)*100);
-          const elapsed = (Date.now() - App.state.ingestStartTime) / 1000;
-          const speed = current / elapsed; // 文件/秒
-          const remainTime = speed > 0 ? (total - current) / speed : 0;
-          
-          document.getElementById('ingestBar').style.width = pct + '%';
-          document.getElementById('ingestPercent').textContent = pct + '%';
-          document.getElementById('ingestCount').textContent = `${current} / ${total}`;
-          document.getElementById('ingestETA').textContent = remainTime > 0 ? `${Math.floor(remainTime)}s` : '--';
-          
-          this.addLog('processing', `正在切分与向量化: com/service/Example${current}.java`);
-          
-          if(current >= total) {
-            clearInterval(interval);
-            document.getElementById('ingestStatus').textContent = '入库完成';
-            document.getElementById('ingestStatus').className = 'font-bold text-green-600';
-            this.addLog('done', '所有文件处理完毕，向量数据库更新成功。');
-            App.utils.toast('入库完成！', 'success');
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            const t = line.trim();
+            if (t.startsWith('data:')) {
+              try {
+                const data = JSON.parse(t.substring(5));
+                this.addLog(data.status || 'info', data.message || '');
+
+                if (data.current !== undefined && data.total !== undefined) {
+                  const pct = data.progressPercentage || Math.floor((data.current / data.total) * 100);
+                  const elapsed = (Date.now() - App.state.ingestStartTime) / 1000;
+                  const speed = data.current / elapsed;
+                  const remainTime = speed > 0 ? (data.total - data.current) / speed : 0;
+
+                  document.getElementById('ingestBar').style.width = pct + '%';
+                  document.getElementById('ingestPercent').textContent = pct + '%';
+                  document.getElementById('ingestCount').textContent = `${data.current} / ${data.total}`;
+                  document.getElementById('ingestETA').textContent = remainTime > 0 ? `${Math.floor(remainTime)}s` : '--';
+                  if (data.currentFile) document.getElementById('ingestFile').textContent = data.currentFile;
+                }
+
+                if (data.status === 'done') {
+                  document.getElementById('ingestStatus').textContent = '入库完成';
+                  document.getElementById('ingestStatus').className = 'font-bold text-green-600';
+                  App.utils.toast('入库完成！', 'success');
+                }
+              } catch (e) {}
+            }
           }
-        }, 150);
-
+        }
       } catch(e) {
-         this.addLog('error', e.message);
+        this.addLog('error', e.message);
+        App.utils.toast('入库失败: ' + e.message, 'error');
       }
     },
     addLog(type, msg) {

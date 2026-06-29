@@ -13,6 +13,7 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -180,6 +181,195 @@ public class RagChatService {
                 return Flux.just(result);
             });
         }
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  带引用的流式问答（前端 citations 展示用）
+    // ═══════════════════════════════════════════════════
+
+    /** 引用文献 */
+    public record Citation(int id, String name, String path) {}
+
+    /** 流式 chunk（含文本和引用） */
+    public record ChatChunk(String text, List<Citation> citations) {}
+
+    /**
+     * 带引用的流式问答。
+     * <p>
+     * 返回的 Flux 中每个元素都是 JSON 字符串：
+     * <ul>
+     *   <li>第一个元素: {@code {"text":"","sources":[{"id":1,"name":"file.java","path":"/docs/file.java"}]}}</li>
+     *   <li>后续元素: {@code {"text":"token内容"}}</li>
+     * </ul>
+     */
+    public Flux<String> chatWithCitations(String query, String modelKey, String sessionId) {
+        // 1. 检索
+        List<Content> contents = buildRetriever().retrieve(Query.from(query));
+
+        // 2. 构建引用列表（按 file_path 去重，保持顺序）
+        List<Citation> citations = buildCitations(contents);
+
+        // 3. 组装 SystemMessage（包含 RAG 检索结果——不入历史）
+        String context = contents.stream()
+                .map(Content::textSegment)
+                .map(segment -> {
+                    String source = segment.metadata().getString("file_path");
+                    String type = segment.metadata().getString("type");
+                    String signature = segment.metadata().getString("signature");
+                    return "[" + type + "] " + signature + " (" + source + ")\n" + segment.text();
+                })
+                .collect(Collectors.joining("\n\n---\n\n"));
+
+        String systemPrompt = ragConfigService.getSystemPrompt()
+                + "\n\n=== 检索到的相关内容 ===\n"
+                + context + "\n"
+                + "=== 内容结束 ===";
+
+        // 4. 获取历史消息
+        List<Message> history = conversationService.getHistory(sessionId);
+
+        // 5. 验证模型配置
+        if (modelKey == null || modelKey.isBlank()) {
+            throw new IllegalArgumentException("请选择一个 LLM 模型");
+        }
+        UUID configId;
+        try {
+            configId = UUID.fromString(modelKey);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("无效的模型 ID: " + modelKey);
+        }
+        ChatClient chatClient = modelRouter.getChatClient(configId);
+
+        boolean streaming = streamingCache.computeIfAbsent(configId,
+                id -> llmConfigService.findRawById(id)
+                        .map(e -> Boolean.TRUE.equals(e.getSupportsStreaming()))
+                        .orElse(false));
+
+        // 6. 构建引用 JSON（发送给前端）
+        String sourcesJson = buildSourcesJson(citations);
+
+        if (streaming) {
+            log.debug("使用流式对话（带引用）, 会话: {}", sessionId);
+
+            conversationService.addUserMessage(sessionId, query);
+            StringBuilder fullResponse = new StringBuilder();
+
+            var spec = chatClient.prompt()
+                    .system(systemPrompt);
+            if (!history.isEmpty()) {
+                spec.messages(history);
+            }
+
+            final String sourcesJsonFinal = sourcesJson;
+
+            return spec
+                    .user(query)
+                    .stream()
+                    .content()
+                    .index((idx, token) -> {
+                        fullResponse.append(token);
+                        if (idx == 0) {
+                            // 第一个 token：携带引用信息
+                            return "{\"text\":" + jsonEscape(token) + ",\"sources\":" + sourcesJsonFinal + "}";
+                        } else {
+                            return "{\"text\":" + jsonEscape(token) + "}";
+                        }
+                    })
+                    .doOnComplete(() -> {
+                        String answer = fullResponse.toString();
+                        conversationService.addAssistantMessage(sessionId, answer);
+                        log.debug("会话 {}: 流式完成（带引用），保存回复完成", sessionId);
+                    })
+                    .doOnError(e -> {
+                        log.error("会话 {}: 流式生成异常", sessionId, e);
+                    });
+        } else {
+            log.debug("使用非流式对话（带引用）, 会话: {}", sessionId);
+
+            var spec = chatClient.prompt()
+                    .system(systemPrompt);
+            if (!history.isEmpty()) {
+                spec.messages(history);
+            }
+
+            return Flux.defer(() -> {
+                String response = spec
+                        .user(query)
+                        .call()
+                        .content();
+                String result = response != null ? response : "模型返回为空。";
+
+                conversationService.addUserMessage(sessionId, query);
+                conversationService.addAssistantMessage(sessionId, result);
+                log.debug("会话 {}: 非流式完成（带引用），保存回复完成", sessionId);
+
+                // 非流式：一次性返回完整结果 + 引用
+                return Flux.just("{\"text\":" + jsonEscape(result) + ",\"sources\":" + sourcesJson + "}");
+            });
+        }
+    }
+
+    /**
+     * 从检索结果构建引用列表（按 file_path 去重，保持首次出现顺序）。
+     */
+    private List<Citation> buildCitations(List<Content> contents) {
+        List<Citation> citations = new ArrayList<>();
+        java.util.Map<String, Integer> pathToId = new java.util.LinkedHashMap<>();
+        int nextId = 1;
+
+        for (Content content : contents) {
+            String filePath = content.textSegment().metadata().getString("file_path");
+            if (filePath == null || filePath.isBlank()) continue;
+
+            if (!pathToId.containsKey(filePath)) {
+                pathToId.put(filePath, nextId++);
+            }
+
+            // 从路径提取文件名
+            String name = filePath;
+            int lastSlash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+            if (lastSlash >= 0) {
+                name = filePath.substring(lastSlash + 1);
+            }
+
+            // 避免重复添加同一路径的引用
+            String finalName = name;
+            if (citations.stream().noneMatch(c -> c.path().equals(filePath))) {
+                citations.add(new Citation(pathToId.get(filePath), finalName, filePath));
+            }
+        }
+
+        return citations;
+    }
+
+    /**
+     * 构建前端引用 JSON 数组。
+     */
+    private String buildSourcesJson(List<Citation> citations) {
+        if (citations.isEmpty()) return "[]";
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < citations.size(); i++) {
+            Citation c = citations.get(i);
+            if (i > 0) sb.append(",");
+            sb.append("{\"id\":").append(c.id())
+              .append(",\"name\":").append(jsonEscape(c.name()))
+              .append(",\"path\":").append(jsonEscape(c.path()))
+              .append("}");
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    /**
+     * JSON 字符串转义（处理引号、换行、反斜杠）。
+     */
+    private String jsonEscape(String s) {
+        if (s == null) return "\"\"";
+        return "\"" + s.replace("\\", "\\\\")
+                       .replace("\"", "\\\"")
+                       .replace("\n", "\\n")
+                       .replace("\r", "\\r")
+                       .replace("\t", "\\t") + "\"";
     }
 }
 
