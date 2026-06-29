@@ -29,6 +29,12 @@ public class RagConfigController {
             Map.entry("filter_pure_numbers", "boolean"),
             Map.entry("max_results",         "number"),
             Map.entry("min_score",           "number"),
+            Map.entry("enable_bm25",         "boolean"),
+            Map.entry("enable_reranking",    "boolean"),
+            Map.entry("reranking_model",     "text"),
+            Map.entry("reranking_top_n",     "number"),
+            Map.entry("reranking_pool_size", "number"),
+            Map.entry("ollama_url",          "text"),
             Map.entry("system_prompt",       "textarea")
     );
 

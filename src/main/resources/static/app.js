@@ -86,7 +86,7 @@ const App = {
     if (tabName === 'dashboard') App.dashboard.refresh();
     if (tabName === 'chat') { App.chat.loadModelList(); App.chat.loadSessions(); }
     if (tabName === 'ingestion') App.ingestion.loadProjects();
-    if (tabName === 'settings') { App.settings.rag.load(); App.settings.llm.load(); App.settings.embed.load(); }
+    if (tabName === 'settings') { App.settings.rag.load(); App.settings.llm.load(); App.settings.embed.load(); App.settings.rerank.load(); }
   },
 
   // ==================== 对话功能 ====================
@@ -1211,6 +1211,140 @@ const App = {
         finally { btn.disabled = false; btn.textContent = orig; }
       },
     },
+
+    // Reranking 配置
+    rerank: {
+      async load() {
+        try {
+          const resp = await fetch('/api/reranking-configs');
+          if (!resp.ok) return;
+          const configs = await resp.json();
+          const tbody = document.getElementById('rerankTable');
+          const hint = document.getElementById('rerankDisabledHint');
+          const hasActive = configs.some(c => c.isActive);
+
+          if (configs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-400 text-sm">暂无配置，点击"新增模型"创建</td></tr>';
+            hint.classList.remove('hidden');
+            App.settings.rerank.syncEnableReranking(false);
+            return;
+          }
+
+          tbody.innerHTML = configs.map(c =>
+            `<tr class="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
+              <td class="px-4 py-3 font-medium text-gray-800 text-sm">${App.utils.escHtml(c.name)}</td>
+              <td class="px-4 py-3 text-sm text-gray-600">${App.utils.escHtml(c.modelName || '—')}</td>
+              <td class="px-4 py-3 text-sm text-gray-500 font-mono">${App.utils.escHtml(c.ollamaUrl || '—')}</td>
+              <td class="px-4 py-3">${c.isActive ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">● 已激活</span>' : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">○ 未激活</span>'}</td>
+              <td class="px-4 py-2.5 text-right"><div class="flex gap-1.5 justify-end flex-wrap">
+                <button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 hover:border-gray-300 transition-colors" onclick="App.settings.rerank.test('${c.id}', this)">测试</button>
+                ${c.isActive
+                  ? `<button class="px-2 py-1 text-xs border border-gray-200 text-gray-500 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.rerank.deactivate('${c.id}')">停用</button>`
+                  : `<button class="px-2 py-1 text-xs border border-primary text-primary rounded hover:bg-green-50 transition-colors" onclick="App.settings.rerank.activate('${c.id}')">激活</button>`}
+                <button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.rerank.edit('${c.id}')">编辑</button>
+                <button class="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50 transition-colors" onclick="App.settings.rerank.delete('${c.id}','${App.utils.escHtml(c.name)}')">删除</button>
+              </div></td></tr>`
+          ).join('');
+
+          hint.classList.toggle('hidden', hasActive);
+          App.settings.rerank.syncEnableReranking(hasActive);
+        } catch (e) { console.error('加载 Reranking 配置失败:', e); }
+      },
+
+      syncEnableReranking(hasActive) {
+        const el = document.getElementById('rag_enable_reranking');
+        if (el && !hasActive) {
+          el.value = 'false';
+        }
+      },
+
+      openModal(config) {
+        const modal = document.getElementById('rerankModal');
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+        document.getElementById('rerankModalTitle').textContent = config ? '编辑 Reranking 模型' : '添加 Reranking 模型';
+        document.getElementById('rerankId').value = config ? config.id : '';
+        document.getElementById('rerankName').value = config ? config.name : '';
+        document.getElementById('rerankModel').value = config ? config.modelName : '';
+        document.getElementById('rerankUrl').value = config ? (config.ollamaUrl || 'http://localhost:11434') : 'http://localhost:11434';
+      },
+
+      closeModal() {
+        document.getElementById('rerankModal').classList.add('hidden');
+        document.getElementById('rerankModal').style.display = 'none';
+      },
+
+      async save(e) {
+        e.preventDefault();
+        const id = document.getElementById('rerankId').value;
+        const body = {
+          name: document.getElementById('rerankName').value.trim(),
+          modelName: document.getElementById('rerankModel').value.trim(),
+          ollamaUrl: document.getElementById('rerankUrl').value.trim(),
+          isActive: false,
+        };
+        if (!body.name || !body.modelName) { App.utils.toast('请填写必填字段', 'warning'); return; }
+        try {
+          const url = id ? '/api/reranking-configs/' + id : '/api/reranking-configs';
+          const method = id ? 'PUT' : 'POST';
+          const resp = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          if (resp.ok) {
+            App.settings.rerank.closeModal();
+            App.settings.rerank.load();
+            App.utils.toast('保存成功', 'success');
+          } else {
+            App.utils.toast('保存失败: ' + resp.status, 'error');
+          }
+        } catch (err) { App.utils.toast('请求失败: ' + err.message, 'error'); }
+      },
+
+      async edit(id) {
+        try {
+          const resp = await fetch('/api/reranking-configs/' + id);
+          if (resp.ok) App.settings.rerank.openModal(await resp.json());
+        } catch (e) { App.utils.toast('获取配置失败', 'error'); }
+      },
+
+      async delete(id, name) {
+        if (!confirm('确定删除 Reranking 配置 "' + name + '"？')) return;
+        try {
+          await fetch('/api/reranking-configs/' + id, { method: 'DELETE' });
+          App.settings.rerank.load();
+          App.utils.toast('删除成功', 'success');
+        } catch (e) { App.utils.toast('删除失败', 'error'); }
+      },
+
+      async activate(id) {
+        try {
+          const r = await fetch('/api/reranking-configs/' + id + '/activate', { method: 'POST' });
+          if (r.ok) App.settings.rerank.load();
+        } catch (e) { App.utils.toast('激活失败', 'error'); }
+      },
+
+      async deactivate(id) {
+        try {
+          const r = await fetch('/api/reranking-configs/' + id + '/deactivate', { method: 'POST' });
+          if (r.ok) App.settings.rerank.load();
+        } catch (e) { App.utils.toast('停用失败', 'error'); }
+      },
+
+      async test(id, btnEl) {
+        const btn = btnEl;
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '测试中...';
+        try {
+          const resp = await fetch('/api/reranking-configs/' + id + '/test', { method: 'POST' });
+          const result = await resp.json();
+          if (result.success) {
+            App.utils.toast('模型就绪！' + result.message, 'success');
+          } else {
+            App.utils.toast('测试失败: ' + result.message, 'error', 6000);
+          }
+        } catch (e) { App.utils.toast('测试异常: ' + e.message, 'error'); }
+        finally { btn.disabled = false; btn.textContent = orig; }
+      },
+    },
   },
 
   init() {
@@ -1229,6 +1363,9 @@ const App = {
     });
     document.getElementById('embedModal')?.addEventListener('click', function (e) {
       if (e.target === e.currentTarget) App.settings.embed.closeModal();
+    });
+    document.getElementById('rerankModal')?.addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) App.settings.rerank.closeModal();
     });
     document.getElementById('projectDetailModal')?.addEventListener('click', function (e) {
       if (e.target === e.currentTarget) App.ingestion.closeProjectDetail();

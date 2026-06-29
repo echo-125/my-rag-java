@@ -43,6 +43,7 @@ public class RagChatService {
     private final ConversationService conversationService;
     private final JdbcTemplate jdbcTemplate;
     private final String pgTable;
+    private final RerankingService rerankingService;
 
     /** 缓存各模型的流式支持标记，避免每次聊天查 DB */
     private final Map<UUID, Boolean> streamingCache = new ConcurrentHashMap<>();
@@ -54,7 +55,8 @@ public class RagChatService {
                           RagConfigService ragConfigService,
                           ConversationService conversationService,
                           JdbcTemplate jdbcTemplate,
-                          @Value("${pgvector.table}") String pgTable) {
+                          @Value("${pgvector.table}") String pgTable,
+                          RerankingService rerankingService) {
         this.embeddingStore = embeddingStore;
         this.embeddingModel = embeddingModel;
         this.modelRouter = modelRouter;
@@ -63,20 +65,47 @@ public class RagChatService {
         this.conversationService = conversationService;
         this.jdbcTemplate = jdbcTemplate;
         this.pgTable = pgTable;
+        this.rerankingService = rerankingService;
     }
 
     /**
-     * 构建检索器：支持纯向量 / 向量+BM25 混合检索（RRF 融合）。
+     * 执行检索 + 可选 reranking，返回最终的 Content 列表。
+     * reranking 开启时，候选池扩大到 reranking_pool_size（默认 20），精排后截取 top_n。
      */
-    private ContentRetriever buildRetriever() {
-        int maxResults = ragConfigService.getInt("max_results", 5);
+    private List<Content> retrieveAndRerank(String query) {
+        boolean rerankingEnabled = ragConfigService.getBoolean("enable_reranking", false);
+
+        // reranking 开启时，候选池扩大（粗排多取，精排少留），确保候选池 ≥ 精排保留数
+        int maxResults = rerankingEnabled
+                ? Math.max(ragConfigService.getInt("reranking_pool_size", 20),
+                           ragConfigService.getInt("reranking_top_n", 3))
+                : ragConfigService.getInt("max_results", 5);
+
+        List<Content> contents = buildRetrieverWithPool(maxResults).retrieve(Query.from(query));
+
+        if (rerankingEnabled && contents.size() > 1) {
+            int topN = ragConfigService.getInt("reranking_top_n", 3);
+            int beforeSize = contents.size();
+            contents = rerankingService.rerank(query, contents);
+            int actualTopN = Math.min(topN, contents.size());
+            contents = contents.subList(0, actualTopN);
+            log.debug("Reranking: 候选 {} → 精排后保留 {} 条", beforeSize, contents.size());
+        }
+
+        return contents;
+    }
+
+    /**
+     * 构建指定候选池大小的检索器。
+     */
+    private ContentRetriever buildRetrieverWithPool(int poolSize) {
         double minScore = ragConfigService.getDouble("min_score", 0.5);
         boolean bm25Enabled = ragConfigService.getBoolean("enable_bm25", true);
 
         EmbeddingStoreContentRetriever vectorRetriever = EmbeddingStoreContentRetriever.builder()
                 .embeddingStore(embeddingStore)
                 .embeddingModel(embeddingModel)
-                .maxResults(maxResults)
+                .maxResults(poolSize)
                 .minScore(minScore)
                 .build();
 
@@ -85,9 +114,9 @@ public class RagChatService {
         }
 
         PgVectorKeywordContentRetriever keywordRetriever =
-                new PgVectorKeywordContentRetriever(jdbcTemplate, pgTable, maxResults);
+                new PgVectorKeywordContentRetriever(jdbcTemplate, pgTable, poolSize);
 
-        return new HybridContentRetriever(vectorRetriever, keywordRetriever, maxResults);
+        return new HybridContentRetriever(vectorRetriever, keywordRetriever, poolSize);
     }
 
     /** 清除流式支持缓存（测试连接后调用） */
@@ -110,8 +139,8 @@ public class RagChatService {
      * @param sessionId 会话 ID（用于多轮对话隔离）
      */
     public Flux<String> chat(String query, String modelKey, String sessionId) {
-        // 1. 检索
-        List<Content> contents = buildRetriever().retrieve(Query.from(query));
+        // 1. 检索 + 可选 reranking
+        List<Content> contents = retrieveAndRerank(query);
         String context = contents.stream()
                 .map(Content::textSegment)
                 .map(segment -> {
@@ -224,8 +253,8 @@ public class RagChatService {
      * </ul>
      */
     public Flux<String> chatWithCitations(String query, String modelKey, String sessionId) {
-        // 1. 检索
-        List<Content> contents = buildRetriever().retrieve(Query.from(query));
+        // 1. 检索 + 可选 reranking
+        List<Content> contents = retrieveAndRerank(query);
 
         // 2. 构建引用列表（按 file_path 去重，保持顺序）
         List<Citation> citations = buildCitations(contents);

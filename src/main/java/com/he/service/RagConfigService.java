@@ -35,6 +35,11 @@ public class RagConfigService {
             "max_results",
             "min_score",
             "enable_bm25",
+            "enable_reranking",
+            "reranking_model",
+            "reranking_top_n",
+            "reranking_pool_size",
+            "ollama_url",
             // ── 噪声过滤 ──
             "enable_noise_filter",
             "noise_min_length",
@@ -67,6 +72,11 @@ public class RagConfigService {
                     new RagConfigEntity("max_results",       "5",    "检索最大结果数"),
                     new RagConfigEntity("min_score",         "0.5",  "检索最低相似度分数"),
                     new RagConfigEntity("enable_bm25",      "true", "是否启用 BM25 关键词混合检索"),
+                    new RagConfigEntity("enable_reranking", "false", "是否启用 Cross-Encoder 精排"),
+                    new RagConfigEntity("reranking_model",  "bge-reranker-v2-m3", "Reranking 模型名称"),
+                    new RagConfigEntity("reranking_top_n",  "3",    "Reranking 后保留的结果数"),
+                    new RagConfigEntity("reranking_pool_size", "20", "Reranking 粗排候选池大小"),
+                    new RagConfigEntity("ollama_url",       "http://localhost:11434", "Ollama 服务地址"),
                     new RagConfigEntity("system_prompt",     "你是一个代码和文档助手。根据以下检索到的相关代码/文档片段回答用户问题。\n如果检索结果中没有相关信息，请如实说明。", "系统提示词")
             );
 

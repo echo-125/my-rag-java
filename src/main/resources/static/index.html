@@ -318,6 +318,23 @@
                 </table>
               </div>
             </div>
+
+            <!-- Reranking Config -->
+            <div id="rerankSection" class="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col overflow-hidden">
+              <div class="p-4 border-b border-gray-50 bg-gray-50/50 flex items-center justify-between">
+                <h2 class="text-sm font-bold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-amber-500 rounded-full"></div>Reranking (重排模型) 接入</h2>
+                <button onclick="App.settings.rerank.openModal()" class="text-xs px-3 py-1.5 bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-200 rounded-md transition-colors font-medium">+ 新增模型</button>
+              </div>
+              <div class="overflow-x-auto custom-scrollbar">
+                <table class="w-full text-xs text-left whitespace-nowrap">
+                  <thead class="bg-gray-50 text-gray-500"><tr class="border-b border-gray-100"><th class="px-4 py-2 font-medium">名称</th><th class="px-4 py-2 font-medium">模型</th><th class="px-4 py-2 font-medium">Ollama 地址</th><th class="px-4 py-2 font-medium">状态</th><th class="px-4 py-2 font-medium text-right">操作</th></tr></thead>
+                  <tbody id="rerankTable" class="divide-y divide-gray-50 text-gray-600"></tbody>
+                </table>
+              </div>
+              <div id="rerankDisabledHint" class="hidden px-4 py-3 bg-amber-50 border-t border-amber-100 text-xs text-amber-700">
+                未配置重排模型，Reranking 功能已自动禁用。请添加模型后开启。
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -365,6 +382,26 @@
         <div><label class="block text-sm font-medium text-gray-700 mb-1">向量维度</label><input id="embedDim" type="number" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" value="2560"></div>
         <div class="flex justify-end gap-2 pt-2">
           <button type="button" onclick="App.settings.embed.closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
+          <button type="submit" class="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Reranking Modal -->
+  <div id="rerankModal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div class="p-5 border-b border-gray-200 flex items-center justify-between">
+        <h3 id="rerankModalTitle" class="text-base font-semibold">添加 Reranking 模型</h3>
+        <button onclick="App.settings.rerank.closeModal()" class="text-gray-400 hover:text-gray-600"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+      </div>
+      <form id="rerankForm" onsubmit="App.settings.rerank.save(event)" class="p-5 space-y-4">
+        <input type="hidden" id="rerankId">
+        <div><label class="block text-sm font-medium text-gray-700 mb-1">配置名称</label><input id="rerankName" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" placeholder="如 BGE-Reranker-v2-m3"></div>
+        <div><label class="block text-sm font-medium text-gray-700 mb-1">模型名称</label><input id="rerankModel" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" placeholder="bge-reranker-v2-m3"></div>
+        <div><label class="block text-sm font-medium text-gray-700 mb-1">Ollama 地址</label><input id="rerankUrl" required class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" placeholder="http://localhost:11434" value="http://localhost:11434"></div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="App.settings.rerank.closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">取消</button>
           <button type="submit" class="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors">保存</button>
         </div>
       </form>
