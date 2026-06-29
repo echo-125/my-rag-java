@@ -24,6 +24,24 @@ public class RagConfigService {
     private static final Logger log = LoggerFactory.getLogger(RagConfigService.class);
     private static final String CACHE_NAME = "ragConfigCache";
 
+    /** 前端展示顺序：按业务逻辑分组 */
+    private static final List<String> DISPLAY_ORDER = List.of(
+            // ── 切分参数 ──
+            "max_segment_size",
+            "max_overlap_size",
+            "semantic_threshold",
+            "merge_min_length",
+            // ── 检索参数 ──
+            "max_results",
+            "min_score",
+            // ── 噪声过滤 ──
+            "enable_noise_filter",
+            "noise_min_length",
+            "filter_pure_numbers",
+            // ── 系统 ──
+            "system_prompt"
+    );
+
     private final RagConfigRepository repository;
 
     public RagConfigService(RagConfigRepository repository) {
@@ -78,12 +96,18 @@ public class RagConfigService {
 
     /**
      * 获取所有配置（带缓存）。
-     * 返回列表按 configKey 排序，方便前端稳定渲染。
+     * 返回列表按 DISPLAY_ORDER 业务分组排序：切分参数 → 检索参数 → 噪声过滤 → 系统提示词。
      */
     @Cacheable(cacheNames = CACHE_NAME, key = "'all'")
     public List<RagConfigEntity> getAllConfigs() {
         return repository.findAll().stream()
-                .sorted((a, b) -> a.getConfigKey().compareTo(b.getConfigKey()))
+                .sorted((a, b) -> {
+                    int ia = DISPLAY_ORDER.indexOf(a.getConfigKey());
+                    int ib = DISPLAY_ORDER.indexOf(b.getConfigKey());
+                    if (ia == -1) ia = Integer.MAX_VALUE;
+                    if (ib == -1) ib = Integer.MAX_VALUE;
+                    return Integer.compare(ia, ib);
+                })
                 .toList();
     }
 

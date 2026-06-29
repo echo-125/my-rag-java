@@ -27,10 +27,15 @@ const App = {
       const container = document.getElementById('toastContainer');
       if (!container) return;
       const el = document.createElement('div');
-      el.className = 'toast show ' + type;
+      el.className = 'toast ' + type;
       el.innerHTML = '<span class="flex-1">' + App.utils.escHtml(msg) + '</span>';
       container.appendChild(el);
-      setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, duration);
+      // 双 rAF 确保 DOM 插入后再触发过渡
+      requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('show')));
+      setTimeout(() => {
+        el.classList.remove('show');
+        setTimeout(() => el.remove(), 350);
+      }, duration);
     },
     async fetchWithRetry(url, options = {}, maxRetries = 2) {
       let lastError;
@@ -235,6 +240,7 @@ const App = {
     clear() {
       App.state.currentSessionId = null;
       document.getElementById('chatContainer').innerHTML = `<div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in"><div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10"><svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div><h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2><p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p></div>`;
+      App.utils.toast('对话已清空', 'info', 2000);
     }
   },
 
