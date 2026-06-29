@@ -9,6 +9,7 @@ import dev.langchain4j.store.embedding.EmbeddingStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -33,6 +34,7 @@ public class RagChatService {
     private final SpringAiModelRouterService modelRouter;
     private final LlmConfigService llmConfigService;
     private final RagConfigService ragConfigService;
+    private final ConversationService conversationService;
 
     /** 缓存各模型的流式支持标记，避免每次聊天查 DB */
     private final Map<UUID, Boolean> streamingCache = new ConcurrentHashMap<>();
@@ -41,12 +43,14 @@ public class RagChatService {
                           EmbeddingModel embeddingModel,
                           SpringAiModelRouterService modelRouter,
                           LlmConfigService llmConfigService,
-                          RagConfigService ragConfigService) {
+                          RagConfigService ragConfigService,
+                          ConversationService conversationService) {
         this.embeddingStore = embeddingStore;
         this.embeddingModel = embeddingModel;
         this.modelRouter = modelRouter;
         this.llmConfigService = llmConfigService;
         this.ragConfigService = ragConfigService;
+        this.conversationService = conversationService;
     }
 
     /**
@@ -70,9 +74,20 @@ public class RagChatService {
     }
 
     /**
-     * 执行 RAG 问答：检索相关文档 → 组装 Prompt → 流式生成。
+     * 执行 RAG 问答：检索相关文档 → 构建 Prompt（System + History + User）→ 流式生成。
+     * <p>
+     * Prompt 构造顺序：
+     * <ol>
+     *   <li><b>SystemMessage</b> — 系统角色提示 + 检索到的 RAG 上下文（始终保留在 Prompt 中，不入历史）</li>
+     *   <li><b>历史消息</b> — 过往的 UserMessage/AssistantMessage 对（从 ConversationService 获取）</li>
+     *   <li><b>UserMessage</b> — 当前用户问题</li>
+     * </ol>
+     *
+     * @param query    用户当前输入
+     * @param modelKey 模型配置 ID
+     * @param sessionId 会话 ID（用于多轮对话隔离）
      */
-    public Flux<String> chat(String query, String modelKey) {
+    public Flux<String> chat(String query, String modelKey, String sessionId) {
         // 1. 检索
         List<Content> contents = buildRetriever().retrieve(Query.from(query));
         String context = contents.stream()
@@ -87,13 +102,17 @@ public class RagChatService {
 
         log.debug("检索到 {} 个相关片段", contents.size());
 
-        // 2. 组装 Prompt（从配置读取系统提示词，支持动态调整）
+        // 2. 组装 SystemMessage（包含 RAG 检索结果——不入历史）
         String systemPrompt = ragConfigService.getSystemPrompt()
                 + "\n\n=== 检索到的相关内容 ===\n"
                 + context + "\n"
                 + "=== 内容结束 ===";
 
-        // 3. 根据 supportsStreaming 标记精确选择调用方式
+        // 3. 获取历史消息（用于构建 Prompt，但不修改历史）
+        List<Message> history = conversationService.getHistory(sessionId);
+        log.debug("会话 {}: 历史消息 {} 条", sessionId, history.size());
+
+        // 4. 验证模型配置
         if (modelKey == null || modelKey.isBlank()) {
             throw new IllegalArgumentException("请选择一个 LLM 模型");
         }
@@ -110,22 +129,55 @@ public class RagChatService {
                         .map(e -> Boolean.TRUE.equals(e.getSupportsStreaming()))
                         .orElse(false));
 
+        // 5. 构建 Prompt：System + History + User，保存对话到历史
         if (streaming) {
-            log.debug("使用流式对话");
-            return chatClient.prompt()
-                    .system(systemPrompt)
+            log.debug("使用流式对话, 会话: {}", sessionId);
+
+            // 保存用户消息到历史（必须在流开始前执行，确保并发安全）
+            conversationService.addUserMessage(sessionId, query);
+            StringBuilder fullResponse = new StringBuilder();
+
+            var spec = chatClient.prompt()
+                    .system(systemPrompt);
+            if (!history.isEmpty()) {
+                spec.messages(history);
+            }
+
+            return spec
                     .user(query)
                     .stream()
-                    .content();
+                    .content()
+                    .doOnNext(token -> fullResponse.append(token))
+                    .doOnComplete(() -> {
+                        String answer = fullResponse.toString();
+                        conversationService.addAssistantMessage(sessionId, answer);
+                        log.debug("会话 {}: 流式完成，保存回复完成", sessionId);
+                    })
+                    .doOnError(e -> {
+                        log.error("会话 {}: 流式生成异常", sessionId, e);
+                    });
         } else {
-            log.debug("使用非流式对话（API 不支持流式）");
+            log.debug("使用非流式对话, 会话: {}", sessionId);
+
+            var spec = chatClient.prompt()
+                    .system(systemPrompt);
+            if (!history.isEmpty()) {
+                spec.messages(history);
+            }
+
             return Flux.defer(() -> {
-                String response = chatClient.prompt()
-                        .system(systemPrompt)
+                String response = spec
                         .user(query)
                         .call()
                         .content();
-                return Flux.just(response != null ? response : "模型返回为空。");
+                String result = response != null ? response : "模型返回为空。";
+
+                // 保存用户问题 + 助手回复到历史
+                conversationService.addUserMessage(sessionId, query);
+                conversationService.addAssistantMessage(sessionId, result);
+                log.debug("会话 {}: 非流式完成，保存回复完成", sessionId);
+
+                return Flux.just(result);
             });
         }
     }

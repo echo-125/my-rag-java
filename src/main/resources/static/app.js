@@ -2,24 +2,20 @@
 const App = {
   state: {
     currentTab: 'chat',
+    currentSessionId: null,
     models: [],
-    llmConfigs: [],
-    embedConfigs: [],
     projects: [],
-    activeLLM: null,
-    activeEmbed: null,
     chartInstance: null,
     mermaidInitialized: false,
     projectIndex: 0,
     qaHistory: [],
     totalChunks: 0,
-    totalFiles: 0,
-    lastProcessTime: null,
     renderScheduled: false,
     pendingText: '',
+    currentSources: [], // 对话当前的引用来源
+    ingestStartTime: null, // 用于计算入库 ETA
   },
 
-  // ==================== 工具函数 ====================
   utils: {
     escHtml(str) {
       if (!str) return '';
@@ -27,74 +23,60 @@ const App = {
       d.textContent = String(str);
       return d.innerHTML;
     },
-
     toast(msg, type = 'info', duration = 4000) {
-      const icons = { success: '✓', error: '✕', info: 'ℹ', warning: '⚠' };
       const container = document.getElementById('toastContainer');
       if (!container) return;
       const el = document.createElement('div');
       el.className = 'toast show ' + type;
-      el.innerHTML = '<span class="flex-shrink-0">' + (icons[type] || icons.info) + '</span><span class="flex-1">' + App.utils.escHtml(msg) + '</span>';
+      el.innerHTML = '<span class="flex-1">' + App.utils.escHtml(msg) + '</span>';
       container.appendChild(el);
-      setTimeout(() => {
-        el.classList.remove('show');
-        setTimeout(() => el.remove(), 300);
-      }, duration);
+      setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, duration);
     },
-
     async fetchWithRetry(url, options = {}, maxRetries = 2) {
       let lastError;
       for (let i = 0; i <= maxRetries; i++) {
-        try {
-          const resp = await fetch(url, options);
-          return resp;
-        } catch (err) {
-          lastError = err;
-          if (i < maxRetries) {
-            await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
-          }
-        }
+        try { return await fetch(url, options); } 
+        catch (err) { lastError = err; if (i < maxRetries) await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i))); }
       }
       throw lastError;
     },
-
+    genId() { return crypto?.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2); },
     showLoading(text) {
       const overlay = document.getElementById('loadingOverlay');
       const textEl = document.getElementById('loadingText');
       if (textEl) textEl.textContent = text || '处理中...';
       if (overlay) overlay.classList.add('active');
     },
-
     hideLoading() {
       const overlay = document.getElementById('loadingOverlay');
       if (overlay) overlay.classList.remove('active');
-    },
+    }
   },
 
-  // ==================== Tab 切换 ====================
   switchTab(tabName) {
     ['chat', 'dashboard', 'ingestion', 'settings'].forEach(id => {
-      const el = document.getElementById('tab-' + id);
-      if (el) el.classList.add('hidden');
+      document.getElementById('tab-' + id)?.classList.add('hidden');
     });
     const target = document.getElementById('tab-' + tabName);
     if (target) {
       target.classList.remove('hidden');
       target.classList.add('animate-fade-in');
     }
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-    document.querySelectorAll('.tab-btn[onclick*="' + tabName + '"]').forEach(btn => btn.classList.add('active'));
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.classList.remove('active', 'text-primary');
+      btn.classList.add('text-gray-500');
+    });
+    document.querySelectorAll('.tab-btn[onclick*="' + tabName + '"]').forEach(btn => {
+      btn.classList.add('active', 'text-primary');
+      btn.classList.remove('text-gray-500');
+    });
     App.state.currentTab = tabName;
     if (tabName === 'dashboard') App.dashboard.refresh();
     if (tabName === 'chat') App.chat.loadModelList();
-    if (tabName === 'settings') {
-      App.settings.rag.load();
-      App.settings.llm.load();
-      App.settings.embed.load();
-    }
+    if (tabName === 'settings') { App.settings.rag.load(); App.settings.llm.load(); App.settings.embed.load(); }
   },
 
-  // ==================== 对话模块 ====================
+  // ==================== 对话功能 ====================
   chat: {
     async loadModelList() {
       try {
@@ -104,23 +86,19 @@ const App = {
           App.state.models = models;
           const select = document.getElementById('modelSelect');
           select.innerHTML = models.length > 0
-            ? models.map(m => '<option value="' + m.id + '">' + App.utils.escHtml(m.name) + ' (' + App.utils.escHtml(m.modelName) + ')</option>').join('')
-            : '<option value="">请先在设置中激活模型</option>';
+            ? models.map(m => `<option value="${m.id}">${App.utils.escHtml(m.name)}</option>`).join('')
+            : '<option value="">请先配置模型</option>';
         }
-      } catch (e) {
-        document.getElementById('modelSelect').innerHTML = '<option value="">模型加载失败</option>';
-      }
+      } catch (e) { document.getElementById('modelSelect').innerHTML = '<option value="">加载失败</option>'; }
     },
-
     onModelChange() {},
-
     onKeydown(e) {
       if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.isComposing) return;
         e.preventDefault();
         App.chat.send();
       }
     },
-
     async send() {
       const input = document.getElementById('chatInput');
       const query = input.value.trim();
@@ -132,37 +110,50 @@ const App = {
       const container = document.getElementById('chatContainer');
       const messagesEl = document.getElementById('chatMessages');
 
-      const welcome = document.getElementById('chatWelcome');
-      if (welcome) welcome.remove();
+      document.getElementById('chatWelcome')?.remove();
 
-      const userDiv = document.createElement('div');
-      userDiv.className = 'flex justify-end animate-fade-in';
-      userDiv.innerHTML = '<div class="msg-user rounded-2xl rounded-tr-sm px-4 py-3 max-w-[75%] shadow-sm"><div class="text-sm leading-relaxed whitespace-pre-wrap">' + App.utils.escHtml(query) + '</div></div>';
-      container.appendChild(userDiv);
+      // 用户气泡
+      container.insertAdjacentHTML('beforeend', `
+        <div class="flex justify-end animate-slide-in mb-6">
+          <div class="msg-user rounded-2xl px-5 py-3.5 max-w-[80%] shadow-sm">
+            <div class="text-[15px] leading-relaxed whitespace-pre-wrap">${App.utils.escHtml(query)}</div>
+          </div>
+        </div>
+      `);
 
-      const aiWrapper = document.createElement('div');
-      aiWrapper.className = 'flex justify-start animate-fade-in';
-      aiWrapper.innerHTML = '<div class="flex gap-3 max-w-full"><div class="w-8 h-8 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center text-xs text-gray-500 font-medium flex-shrink-0 mt-1">AI</div><div class="msg-ai rounded-2xl rounded-tl-sm px-4 py-3 max-w-[75%] shadow-sm"><div class="text-xs text-gray-400 mb-1 font-medium">RAG Assistant</div><div class="ai-response prose prose-sm"><p class="text-gray-400 animate-pulse">思考中...</p></div></div></div>';
-      container.appendChild(aiWrapper);
-      const responseDiv = aiWrapper.querySelector('.ai-response');
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      // AI 气泡结构 (预留 citations-container)
+      const wrapperId = 'ai-msg-' + App.utils.genId();
+      container.insertAdjacentHTML('beforeend', `
+        <div id="${wrapperId}" class="flex justify-start animate-fade-in mb-8">
+          <div class="flex gap-4 w-full">
+            <div class="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-white flex-shrink-0 mt-1 shadow-md shadow-primary/20">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <div class="msg-ai flex-1 max-w-[calc(100%-3rem)]">
+              <div class="text-sm font-semibold text-gray-800 mb-1">智能助手</div>
+              <div class="ai-response prose prose-sm w-full"><p class="text-gray-400 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-primary animate-ping"></span>思考并检索中...</p></div>
+              <div class="citations-container citations-panel hidden"></div>
+            </div>
+          </div>
+        </div>
+      `);
+      
+      const responseDiv = document.querySelector(`#${wrapperId} .ai-response`);
+      const citationsDiv = document.querySelector(`#${wrapperId} .citations-container`);
+      messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
 
-      const btn = document.getElementById('sendBtn');
-      btn.disabled = true;
+      document.getElementById('sendBtn').disabled = true;
+      App.state.currentSessionId = App.state.currentSessionId || App.utils.genId();
+      App.state.currentSources = []; // 清空本次溯源
 
       try {
         const resp = await App.utils.fetchWithRetry('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, modelKey }),
+          body: JSON.stringify({ query, modelKey, sessionId: App.state.currentSessionId }),
         }, 1);
 
-        if (!resp.ok) {
-          let errorMsg = '请求失败 (HTTP ' + resp.status + ')';
-          try { const eb = await resp.json(); errorMsg = eb.message || eb.error || errorMsg; } catch (e) {}
-          responseDiv.innerHTML = '<p class="text-red-500 text-sm">✕ ' + App.utils.escHtml(errorMsg) + '</p>';
-          return;
-        }
+        if (!resp.ok) throw new Error('请求失败 HTTP ' + resp.status);
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
@@ -176,96 +167,85 @@ const App = {
           for (const line of lines) {
             const t = line.trim();
             if (t.startsWith('data:') && t.length > 6) {
-              fullText += t.substring(6);
-              App.chat.scheduleRender(responseDiv, fullText);
-            } else if (t.startsWith('data:{"error"')) {
-              fullText += t.substring(6);
-              App.chat.scheduleRender(responseDiv, fullText);
+              try {
+                // 假设后端传递 json：{ "text": "...", "sources": [{"id": 1, "name": "doc.md"}] }
+                // 或者直接传文本，这里做个兼容处理
+                const payload = JSON.parse(t.substring(5));
+                if(payload.text) fullText += payload.text;
+                if(payload.sources && payload.sources.length > 0) {
+                   App.state.currentSources = payload.sources;
+                   App.chat.renderCitations(citationsDiv, App.state.currentSources);
+                }
+                App.chat.scheduleRender(responseDiv, fullText);
+              } catch (e) {
+                // 回退为纯文本流式
+                fullText += t.substring(5).replace(/^"|"$/g, '').replace(/\\n/g, '\n');
+                App.chat.scheduleRender(responseDiv, fullText);
+              }
+              messagesEl.scrollTo({ top: messagesEl.scrollHeight });
             }
           }
         }
-
-        const selectedModel = App.state.models.find(m => m.id === modelKey);
-        const modelName = selectedModel ? selectedModel.modelName : 'unknown';
-        App.state.qaHistory.unshift({ question: query, answer: fullText, time: new Date().toLocaleTimeString() });
-        fetch('/api/chat/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question: query, answer: fullText, modelName }),
-        }).catch(() => {});
-
       } catch (e) {
-        responseDiv.innerHTML = '<p class="text-red-500 text-sm">请求失败: ' + App.utils.escHtml(e.message) + '</p>';
+        responseDiv.innerHTML = `<p class="text-red-500 text-sm">✕ ${App.utils.escHtml(e.message)}</p>`;
       } finally {
-        btn.disabled = false;
-        messagesEl.scrollTop = messagesEl.scrollHeight;
+        document.getElementById('sendBtn').disabled = false;
+        messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
       }
     },
-
     scheduleRender(responseDiv, text) {
       App.state.pendingText = text;
       if (App.state.renderScheduled) return;
       App.state.renderScheduled = true;
       requestAnimationFrame(() => {
-        if (!responseDiv) { App.state.renderScheduled = false; return; }
-        try {
+        if (responseDiv) {
           responseDiv.innerHTML = marked.parse(App.state.pendingText);
           App.chat.renderMermaid(responseDiv);
-        } catch (e) {
-          responseDiv.textContent = App.state.pendingText;
+          responseDiv.querySelectorAll('pre code').forEach((block) => {
+            if (!block.classList.contains('language-mermaid') && window.hljs) hljs.highlightElement(block);
+          });
         }
         App.state.renderScheduled = false;
       });
     },
-
     renderMermaid(container) {
-      if (!container) return;
-      const existing = container.querySelectorAll('.mermaid-wrapper');
-      existing.forEach(el => {
-        const code = el.getAttribute('data-code');
-        if (code && window.mermaid) {
-          const id = 'mmd-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
-          mermaid.render(id, code).then(({ svg }) => { el.innerHTML = svg; }).catch(() => {});
-        }
-      });
-      const blocks = container.querySelectorAll('pre code.language-mermaid');
-      blocks.forEach((block, idx) => {
-        const graphDef = block.textContent.trim();
-        if (!graphDef) return;
+      container.querySelectorAll('pre code.language-mermaid').forEach((block, idx) => {
+        const code = block.textContent.trim();
+        if (!code) return;
         const wrapper = document.createElement('div');
         wrapper.className = 'my-4 flex justify-center mermaid-wrapper';
-        wrapper.setAttribute('data-code', graphDef);
+        wrapper.setAttribute('data-code', code);
         const id = 'mmd-' + Date.now() + '-' + idx;
         wrapper.id = id;
         block.parentNode.replaceWith(wrapper);
-        if (window.mermaid) {
-          mermaid.render(id, graphDef).then(({ svg }) => { wrapper.innerHTML = svg; }).catch(() => {
-            wrapper.innerHTML = '<div class="text-red-500 text-sm p-2 border border-red-200 rounded bg-red-50">Mermaid 渲染失败</div>';
-          });
-        }
+        if (window.mermaid) mermaid.render(id, code).then(({ svg }) => { wrapper.innerHTML = svg; }).catch(() => wrapper.innerHTML = '<div class="text-red-500 text-xs">图表渲染失败</div>');
       });
     },
-
-    clear() {
-      const container = document.getElementById('chatContainer');
-      container.innerHTML = '<div id="chatWelcome" class="flex flex-col items-center justify-center py-20 text-center"><div class="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4"><svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div><h2 class="text-xl font-semibold text-gray-900 mb-2">有什么可以帮你的？</h2><p class="text-gray-500 text-sm max-w-md">基于你的知识库进行智能问答，支持 Markdown 格式回复和 Mermaid 图表渲染。</p></div>';
+    renderCitations(container, sources) {
+      if(!sources || sources.length === 0) return;
+      container.classList.remove('hidden');
+      container.innerHTML = `<div class="w-full text-xs font-medium text-gray-400 mb-1 flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> 引用来源</div>` + 
+      sources.map((s, i) => `
+        <div class="citation-pill" title="${App.utils.escHtml(s.path || s.name)}">
+          <span class="font-semibold text-[10px] bg-gray-200/50 px-1.5 rounded text-gray-500">[${i+1}]</span> 
+          <span>${App.utils.escHtml(s.name)}</span>
+        </div>
+      `).join('');
     },
+    clear() {
+      App.state.currentSessionId = null;
+      document.getElementById('chatContainer').innerHTML = `<div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in"><div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10"><svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div><h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2><p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p></div>`;
+    }
   },
 
-  // ==================== 仪表盘模块 ====================
+  // ==================== 仪表盘功能 ====================
   dashboard: {
     refresh() {
       if (!App.state.mermaidInitialized) {
-        try {
-          if (window.mermaid) mermaid.run({ nodes: document.querySelectorAll('.mermaid:not([data-processed])') });
-          App.state.mermaidInitialized = true;
-        } catch (e) { console.warn('Mermaid init:', e); }
+        try { if (window.mermaid) mermaid.run({ nodes: document.querySelectorAll('.mermaid:not([data-processed])') }); App.state.mermaidInitialized = true; } catch (e) {}
       }
-      App.dashboard.initECharts();
-      App.dashboard.loadStats();
-      App.dashboard.loadRecentQA();
+      this.initECharts(); this.loadStats(); this.loadRecentQA();
     },
-
     async loadStats() {
       try {
         const resp = await App.utils.fetchWithRetry('/api/dashboard/stats');
@@ -276,7 +256,6 @@ const App = {
         document.getElementById('statLastTime').textContent = stats.lastProcessTime || App.state.lastProcessTime || '--';
       } catch (e) {
         document.getElementById('statChunks').textContent = App.state.totalChunks || 0;
-        document.getElementById('statFiles').textContent = App.state.totalFiles || 0;
         document.getElementById('statProjects').textContent = App.ingestion.getProjects().length || 0;
         document.getElementById('statLastTime').textContent = App.state.lastProcessTime || '--';
       }
@@ -291,7 +270,7 @@ const App = {
           container.innerHTML = '<div class="text-sm text-gray-400 text-center py-8">暂无记录</div>';
         } else {
           container.innerHTML = records.map(qa =>
-            '<div class="p-3 bg-gray-50 rounded-lg border border-gray-100 animate-fade-in"><div class="text-sm font-medium text-gray-800 truncate">' + App.utils.escHtml(qa.question) + '</div><div class="text-xs text-gray-500 mt-1 line-clamp-2">' + App.utils.escHtml(qa.answer || '') + '</div><div class="text-xs text-gray-400 mt-1.5">' + (qa.modelName || '') + (qa.createdAt ? ' · ' + new Date(qa.createdAt).toLocaleString() : '') + '</div></div>'
+            `<div class="p-3 bg-gray-50 rounded-lg border border-gray-100 animate-fade-in"><div class="text-sm font-medium text-gray-800 truncate">${App.utils.escHtml(qa.question)}</div><div class="text-xs text-gray-500 mt-1 line-clamp-2">${App.utils.escHtml(qa.answer || '')}</div><div class="text-xs text-gray-400 mt-1.5">${(qa.modelName || '')}${(qa.createdAt ? ' · ' + new Date(qa.createdAt).toLocaleString() : '')}</div></div>`
           ).join('');
         }
       } catch (e) {
@@ -299,7 +278,7 @@ const App = {
           container.innerHTML = '<div class="text-sm text-gray-400 text-center py-8">暂无记录</div>';
         } else {
           container.innerHTML = App.state.qaHistory.slice(0, 10).map(qa =>
-            '<div class="p-3 bg-gray-50 rounded-lg border border-gray-100 animate-fade-in"><div class="text-sm font-medium text-gray-800 truncate">' + App.utils.escHtml(qa.question) + '</div><div class="text-xs text-gray-500 mt-1 line-clamp-2">' + App.utils.escHtml(qa.answer.substring(0, 120)) + (qa.answer.length > 120 ? '...' : '') + '</div><div class="text-xs text-gray-400 mt-1.5">' + qa.time + '</div></div>'
+            `<div class="p-3 bg-gray-50 rounded-lg border border-gray-100 animate-fade-in"><div class="text-sm font-medium text-gray-800 truncate">${App.utils.escHtml(qa.question)}</div><div class="text-xs text-gray-500 mt-1 line-clamp-2">${App.utils.escHtml(qa.answer.substring(0, 120))}${(qa.answer.length > 120 ? '...' : '')}</div><div class="text-xs text-gray-400 mt-1.5">${qa.time}</div></div>`
           ).join('');
         }
       }
@@ -307,9 +286,8 @@ const App = {
 
     initECharts() {
       const dom = document.getElementById('chartContainer');
-      if (!dom) return;
-      if (App.state.chartInstance) { App.state.chartInstance.dispose(); App.state.chartInstance = null; }
-      if (!window.echarts) return;
+      if (!dom || !window.echarts) return;
+      if (App.state.chartInstance) App.state.chartInstance.dispose();
       App.state.chartInstance = echarts.init(dom, null, { renderer: 'canvas' });
 
       App.utils.fetchWithRetry('/api/dashboard/language-stats')
@@ -337,155 +315,136 @@ const App = {
         backgroundColor: 'transparent',
         tooltip: { trigger: 'axis' },
         grid: { left: 48, right: 24, top: 32, bottom: 48 },
-        xAxis: { type: 'category', data: ['Java', 'JavaScript', 'TypeScript', 'Python', 'SQL', 'XML'], axisLabel: { color: '#9ca3af', rotate: 30, fontSize: 11 }, axisLine: { lineStyle: { color: '#e5e7eb' } } },
+        xAxis: { type: 'category', data: ['Java', 'JavaScript', 'Markdown', 'Python', 'XML'], axisLabel: { color: '#9ca3af', rotate: 30, fontSize: 11 }, axisLine: { lineStyle: { color: '#e5e7eb' } } },
         yAxis: { type: 'value', name: 'Chunks', nameTextStyle: { color: '#9ca3af' }, axisLabel: { color: '#9ca3af' }, splitLine: { lineStyle: { color: '#f3f4f6' } } },
-        series: [{ type: 'bar', data: [0, 0, 0, 0, 0, 0], itemStyle: { color: '#e5e7eb', borderRadius: [4, 4, 0, 0] }, barWidth: '40%' }],
+        series: [{ type: 'bar', data: [0, 0, 0, 0, 0], itemStyle: { color: '#e5e7eb', borderRadius: [4, 4, 0, 0] }, barWidth: '40%' }],
       });
-    },
+    }
   },
 
-  // ==================== 文档入库模块 ====================
+  // ==================== 多步入库工作流 ====================
   ingestion: {
     getProjects() {
-      const rows = document.querySelectorAll('#projectList > div');
-      const projects = [];
-      rows.forEach(row => {
-        const inputs = row.querySelectorAll('input');
-        const name = inputs[0] ? inputs[0].value.trim() : '';
-        const path = inputs[1] ? inputs[1].value.trim() : '';
-        if (name && path) projects.push({ name, path });
-      });
-      return projects;
+      return Array.from(document.querySelectorAll('#projectList .project-item')).map(row => ({
+        name: row.dataset.name, path: row.dataset.path
+      }));
     },
-
     addProject() {
-      const nameEl = document.getElementById('projectName');
-      const pathEl = document.getElementById('projectPath');
-      const name = nameEl ? nameEl.value.trim() : '';
-      const path = pathEl ? pathEl.value.trim() : '';
-      if (!name || !path) {
-        App.utils.toast('请填写项目名称和路径', 'warning');
-        nameEl?.focus();
-        return;
-      }
-      const container = document.getElementById('projectList');
+      const name = document.getElementById('projectName').value.trim();
+      const path = document.getElementById('projectPath').value.trim();
+      if (!name || !path) return App.utils.toast('请输入名称和绝对路径', 'warning');
       const idx = App.state.projectIndex++;
-      const row = document.createElement('div');
-      row.className = 'flex flex-col sm:flex-row gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100 animate-fade-in';
-      row.id = 'project-' + idx;
-      row.innerHTML =
-        '<div class="flex-1"><input class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" placeholder="项目名称" value="' + App.utils.escHtml(name) + '"></div>' +
-        '<div class="flex-[2]"><input class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" placeholder="本地路径，如 D:\\code\\myproject" value="' + App.utils.escHtml(path) + '"></div>' +
-        '<button class="self-start sm:self-center p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0" onclick="App.ingestion.removeProject(' + idx + ')" title="删除">' +
-        '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>';
-      container.appendChild(row);
-      nameEl.value = '';
-      pathEl.value = '';
-      nameEl.focus();
+      document.getElementById('projectList').insertAdjacentHTML('beforeend', `
+        <div id="proj-${idx}" class="project-item group flex flex-col bg-white border border-gray-200 p-3 rounded-lg shadow-sm" data-name="${App.utils.escHtml(name)}" data-path="${App.utils.escHtml(path)}">
+          <div class="flex justify-between items-start">
+            <div><div class="text-sm font-semibold text-gray-800">${App.utils.escHtml(name)}</div><div class="text-xs text-gray-500 font-mono mt-1 break-all">${App.utils.escHtml(path)}</div></div>
+            <button onclick="document.getElementById('proj-${idx}').remove()" class="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+          </div>
+        </div>
+      `);
+      document.getElementById('projectName').value = ''; document.getElementById('projectPath').value = '';
     },
-
-    removeProject(idx) {
-      const row = document.getElementById('project-' + idx);
-      if (row) row.remove();
+    setStep(stepNum) {
+      [1, 2, 3].forEach(i => {
+        const dom = document.getElementById('step-' + (i===1?'scan':i===2?'select':'process'));
+        const nav = document.getElementById('nav-step' + i);
+        if(i === stepNum) {
+          dom.classList.remove('opacity-0', 'pointer-events-none');
+          nav.classList.replace('text-gray-400', 'text-primary');
+          nav.querySelector('span').classList.replace('bg-gray-100', 'bg-primary/10');
+        } else {
+          dom.classList.add('opacity-0', 'pointer-events-none');
+        }
+      });
     },
-
-    async start() {
-      const projects = App.ingestion.getProjects();
-      if (projects.length === 0) {
-        App.utils.toast('请至少添加一个项目（名称 + 路径）', 'warning');
-        return;
-      }
-
-      const btn = document.getElementById('ingestBtn');
-      btn.disabled = true;
-      btn.textContent = '入库中...';
-
-      const progressEl = document.getElementById('ingestProgress');
-      progressEl.classList.remove('hidden');
-      App.ingestion.updateProgress(0, '准备中...', '—');
-      App.ingestion.addLog('info', '开始入库，共 ' + projects.length + ' 个项目...');
+    async startScan() {
+      const projects = this.getProjects();
+      if(projects.length === 0) return App.utils.toast('请在左侧添加项目后重试', 'warning');
+      
+      const btn = document.getElementById('mainIngestBtn');
+      btn.disabled = true; btn.textContent = '校验中...';
 
       try {
-        for (const project of projects) {
-          App.ingestion.addLog('info', '── 项目: ' + project.name + ' (' + project.path + ')');
+        // Mock Backend: /api/ingestion/scan 
+        // 传递 paths，后端返回有哪些后缀名以及对应数量
+        // const resp = await fetch('/api/ingestion/scan', { method:'POST', body: JSON.stringify({ projects }) });
+        
+        // 模拟后端返回的结果
+        await new Promise(r => setTimeout(r, 800)); 
+        const mockExts = [{ext:'.md', count:45}, {ext:'.java', count:120}, {ext:'.txt', count:12}, {ext:'.xml', count:34}];
+        
+        const container = document.getElementById('fileTypeContainer');
+        container.innerHTML = mockExts.map(e => `
+          <label class="flex items-center gap-2 p-2.5 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors bg-white shadow-sm">
+            <input type="checkbox" value="${e.ext}" checked class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary/20">
+            <span class="text-sm font-medium text-gray-700">${e.ext} <span class="text-xs text-gray-400 font-normal">(${e.count} 文件)</span></span>
+          </label>
+        `).join('');
 
-          try {
-            const resp = await App.utils.fetchWithRetry('/api/ingestion/start', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ paths: [project.path], projectName: project.name }),
-            }, 1);
-
-            const reader = resp.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop();
-
-              for (const line of lines) {
-                const t = line.trim();
-                if (t.startsWith('data:')) {
-                  try {
-                    const data = JSON.parse(t.substring(5));
-                    App.ingestion.addLog(data.status || 'info', data.message || '');
-                    if (data.stats) {
-                      const s = data.stats;
-                      App.ingestion.updateProgress(s.progressPercentage || 0, s.currentFile || data.message || '', (s.successFiles || 0) + ' / ' + ((s.successFiles || 0) + (s.failedFiles || 0) + (s.skippedFiles || 0)) + ' 文件');
-                      App.state.totalChunks = (App.state.totalChunks || 0) + (s.processedFiles || 0);
-                    }
-                    if (data.status === 'done') App.utils.toast(data.message || '项目入库完成', 'success', 6000);
-                  } catch (e) {}
-                }
-              }
-            }
-          } catch (e) {
-            App.ingestion.addLog('error', '请求失败: ' + e.message);
-            App.utils.toast('入库请求失败: ' + e.message, 'error');
-          }
-        }
+        this.setStep(2);
+      } catch (e) {
+        App.utils.toast('校验失败: ' + e.message, 'error');
       } finally {
-        App.state.lastProcessTime = new Date().toLocaleTimeString();
-        App.ingestion.addLog('done', '全部入库完成！');
-        btn.disabled = false;
-        btn.textContent = '开始入库';
+        btn.textContent = '重新校验'; btn.disabled = false;
       }
     },
+    async confirmTypesAndProcess() {
+      const checkedBoxes = document.querySelectorAll('#fileTypeContainer input:checked');
+      if(checkedBoxes.length === 0) return App.utils.toast('请至少勾选一种文件类型', 'warning');
+      const selectedExts = Array.from(checkedBoxes).map(cb => cb.value);
 
-    updateProgress(pct, status, count) {
-      const bar = document.getElementById('ingestBar');
-      const pctEl = document.getElementById('ingestPercent');
-      const statusEl = document.getElementById('ingestStatus');
-      const fileEl = document.getElementById('ingestFile');
-      const countEl = document.getElementById('ingestCount');
-      if (bar) bar.style.width = pct + '%';
-      if (pctEl) pctEl.textContent = pct + '%';
-      if (statusEl) statusEl.textContent = status || '处理中...';
-      if (fileEl) fileEl.textContent = status || '—';
-      if (countEl) countEl.textContent = count || '0 / 0 文件';
+      this.setStep(3);
+      document.getElementById('ingestLog').innerHTML = '';
+      App.state.ingestStartTime = Date.now();
+      
+      this.addLog('info', `开始入库，所选类型: ${selectedExts.join(', ')}`);
+      
+      try {
+        // 请求后端真正的执行接口 (支持 SSE 流式返回进度)
+        // fetch('/api/ingestion/process', { method: 'POST', body: JSON.stringify({ projects, exts: selectedExts }) });
+
+        // 以下为前端模拟流式返回的进度
+        let total = 200, current = 0;
+        const interval = setInterval(() => {
+          current += Math.floor(Math.random() * 5) + 1;
+          if(current > total) current = total;
+          
+          // 渲染进度与 ETA
+          const pct = Math.floor((current/total)*100);
+          const elapsed = (Date.now() - App.state.ingestStartTime) / 1000;
+          const speed = current / elapsed; // 文件/秒
+          const remainTime = speed > 0 ? (total - current) / speed : 0;
+          
+          document.getElementById('ingestBar').style.width = pct + '%';
+          document.getElementById('ingestPercent').textContent = pct + '%';
+          document.getElementById('ingestCount').textContent = `${current} / ${total}`;
+          document.getElementById('ingestETA').textContent = remainTime > 0 ? `${Math.floor(remainTime)}s` : '--';
+          
+          this.addLog('processing', `正在切分与向量化: com/service/Example${current}.java`);
+          
+          if(current >= total) {
+            clearInterval(interval);
+            document.getElementById('ingestStatus').textContent = '入库完成';
+            document.getElementById('ingestStatus').className = 'font-bold text-green-600';
+            this.addLog('done', '所有文件处理完毕，向量数据库更新成功。');
+            App.utils.toast('入库完成！', 'success');
+          }
+        }, 150);
+
+      } catch(e) {
+         this.addLog('error', e.message);
+      }
     },
-
-    addLog(status, message) {
+    addLog(type, msg) {
       const container = document.getElementById('ingestLog');
-      if (!container) return;
-      const time = new Date().toLocaleTimeString();
-      const icons = { info: 'ℹ', processing: '⚙', success: '✓', error: '✗', skip: '⊘', done: '✔' };
-      const icon = icons[status] || '•';
-      const colors = { info: 'text-gray-500', processing: 'text-primary', success: 'text-green-600', error: 'text-red-500', skip: 'text-amber-600', done: 'text-green-700' };
-      const color = colors[status] || 'text-gray-500';
-      const div = document.createElement('div');
-      div.className = 'log-line ' + color + ' text-xs leading-relaxed';
-      div.textContent = '[' + time + '] ' + icon + ' ' + message;
-      container.appendChild(div);
+      const time = new Date().toLocaleTimeString('en-US', {hour12:false});
+      const colors = { info:'text-blue-400', processing:'text-gray-300', error:'text-red-400', done:'text-green-400' };
+      container.insertAdjacentHTML('beforeend', `<div class="${colors[type]}">[${time}] ${msg}</div>`);
       container.scrollTop = container.scrollHeight;
-    },
+    }
   },
 
-  // ==================== 设置模块 ====================
+  // ==================== 设 置 ====================
   settings: {
     // RAG 配置
     rag: {
@@ -550,27 +509,25 @@ const App = {
           const configs = await resp.json();
           const tbody = document.getElementById('llmTable');
           if (configs.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-400 text-sm">暂无配置，点击"添加配置"创建</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-400 text-sm">暂无配置，点击"添加模型"创建</td></tr>';
             return;
           }
           tbody.innerHTML = configs.map(c =>
-            '<tr class="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">' +
-            '<td class="px-4 py-3 font-medium text-gray-800 text-sm">' + App.utils.escHtml(c.name) + '</td>' +
-            '<td class="px-4 py-3 text-sm text-gray-600">' + App.utils.escHtml(c.modelName || '—') + '</td>' +
-            '<td class="px-4 py-3 text-sm text-gray-500 max-w-[200px] truncate" title="' + App.utils.escHtml(c.baseUrl || '') + '">' + App.utils.escHtml(c.baseUrl || '—') + '</td>' +
-            '<td class="px-4 py-3 text-xs">' + (c.supportsStreaming ? '<span class="text-green-600">✓ 流式</span>' : '<span class="text-amber-600">✗ 非流式</span>') + '</td>' +
-            '<td class="px-4 py-3">' + (c.isActive ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">● 已激活</span>' : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">○ 未激活</span>') + '</td>' +
-            '<td class="px-4 py-2.5 text-right"><div class="flex gap-1.5 justify-end flex-wrap">' +
-            '<button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 hover:border-gray-300 transition-colors" onclick="App.settings.llm.test(\'' + c.id + '\', this)">测试</button>' +
-            (c.isActive
-              ? '<button class="px-2 py-1 text-xs border border-gray-200 text-gray-500 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.llm.deactivate(\'' + c.id + '\')">停用</button>'
-              : '<button class="px-2 py-1 text-xs border border-primary text-primary rounded hover:bg-green-50 transition-colors" onclick="App.settings.llm.activate(\'' + c.id + '\')">激活</button>') +
-            '<button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.llm.edit(\'' + c.id + '\')">编辑</button>' +
-            '<button class="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50 transition-colors" onclick="App.settings.llm.delete(\'' + c.id + '\',\'' + App.utils.escHtml(c.name) + '\')">删除</button>' +
-            '</div></td></tr>'
+            `<tr class="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
+              <td class="px-4 py-3 font-medium text-gray-800 text-sm">${App.utils.escHtml(c.name)}</td>
+              <td class="px-4 py-3 text-sm text-gray-600">${App.utils.escHtml(c.modelName || '—')}</td>
+              <td class="px-4 py-3">${c.isActive ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">● 已激活</span>' : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">○ 未激活</span>'}</td>
+              <td class="px-4 py-2.5 text-right"><div class="flex gap-1.5 justify-end flex-wrap">
+                <button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 hover:border-gray-300 transition-colors" onclick="App.settings.llm.test('${c.id}', this)">测试</button>
+                ${c.isActive
+                  ? `<button class="px-2 py-1 text-xs border border-gray-200 text-gray-500 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.llm.deactivate('${c.id}')">停用</button>`
+                  : `<button class="px-2 py-1 text-xs border border-primary text-primary rounded hover:bg-green-50 transition-colors" onclick="App.settings.llm.activate('${c.id}')">激活</button>`}
+                <button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.llm.edit('${c.id}')">编辑</button>
+                <button class="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50 transition-colors" onclick="App.settings.llm.delete('${c.id}','${App.utils.escHtml(c.name)}')">删除</button>
+              </div></td></tr>`
           ).join('');
         } catch (e) {
-          document.getElementById('llmTable').innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-red-500 text-sm">加载失败</td></tr>';
+          document.getElementById('llmTable').innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-red-500 text-sm">加载失败</td></tr>';
         }
       },
 
@@ -682,23 +639,22 @@ const App = {
           const configs = await resp.json();
           const tbody = document.getElementById('embedTable');
           if (configs.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-400 text-sm">暂无配置，点击"添加配置"创建</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-400 text-sm">暂无配置，点击"新增向量"创建</td></tr>';
             return;
           }
           tbody.innerHTML = configs.map(c =>
-            '<tr class="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">' +
-            '<td class="px-4 py-3 font-medium text-gray-800 text-sm">' + App.utils.escHtml(c.name) + '</td>' +
-            '<td class="px-4 py-3"><span class="inline-flex px-2 py-1 bg-gray-100 rounded text-xs text-gray-600 border border-gray-200">' + (c.provider === 'ollama' ? 'Ollama' : 'OpenAI') + '</span></td>' +
-            '<td class="px-4 py-3 text-sm text-gray-600">' + App.utils.escHtml(c.modelName || '—') + '</td>' +
-            '<td class="px-4 py-3">' + (c.isActive ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">● 已激活</span>' : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">○ 未激活</span>') + '</td>' +
-            '<td class="px-4 py-2.5 text-right"><div class="flex gap-1.5 justify-end flex-wrap">' +
-            '<button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 hover:border-gray-300 transition-colors" onclick="App.settings.embed.test(\'' + c.id + '\', this)">测试</button>' +
-            (c.isActive
-              ? '<button class="px-2 py-1 text-xs border border-gray-200 text-gray-500 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.embed.deactivate(\'' + c.id + '\')">停用</button>'
-              : '<button class="px-2 py-1 text-xs border border-primary text-primary rounded hover:bg-green-50 transition-colors" onclick="App.settings.embed.activate(\'' + c.id + '\')">激活</button>') +
-            '<button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.embed.edit(\'' + c.id + '\')">编辑</button>' +
-            '<button class="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50 transition-colors" onclick="App.settings.embed.delete(\'' + c.id + '\',\'' + App.utils.escHtml(c.name) + '\')">删除</button>' +
-            '</div></td></tr>'
+            `<tr class="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
+              <td class="px-4 py-3 font-medium text-gray-800 text-sm">${App.utils.escHtml(c.name)}</td>
+              <td class="px-4 py-3 text-sm text-gray-600">${c.dimension || '—'}</td>
+              <td class="px-4 py-3">${c.isActive ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">● 已激活</span>' : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">○ 未激活</span>'}</td>
+              <td class="px-4 py-2.5 text-right"><div class="flex gap-1.5 justify-end flex-wrap">
+                <button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 hover:border-gray-300 transition-colors" onclick="App.settings.embed.test('${c.id}', this)">测试</button>
+                ${c.isActive
+                  ? `<button class="px-2 py-1 text-xs border border-gray-200 text-gray-500 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.embed.deactivate('${c.id}')">停用</button>`
+                  : `<button class="px-2 py-1 text-xs border border-primary text-primary rounded hover:bg-green-50 transition-colors" onclick="App.settings.embed.activate('${c.id}')">激活</button>`}
+                <button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.embed.edit('${c.id}')">编辑</button>
+                <button class="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50 transition-colors" onclick="App.settings.embed.delete('${c.id}','${App.utils.escHtml(c.name)}')">删除</button>
+              </div></td></tr>`
           ).join('');
         } catch (e) { console.error('加载 Embedding 配置失败:', e); }
       },
@@ -799,27 +755,37 @@ const App = {
     },
   },
 
-  // ==================== 初始化 ====================
   init() {
-    try { if (window.mermaid) mermaid.initialize({ theme: 'dark', startOnLoad: false }); } catch (e) {}
     App.chat.loadModelList();
-
     const chatInput = document.getElementById('chatInput');
     if (chatInput) {
       chatInput.addEventListener('input', function () {
         this.style.height = 'auto';
         this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+        if (this.value.trim() === '') this.style.height = 'auto';
       });
     }
 
-    document.getElementById('llmModal').addEventListener('click', function (e) {
+    document.getElementById('llmModal')?.addEventListener('click', function (e) {
       if (e.target === e.currentTarget) App.settings.llm.closeModal();
     });
-    document.getElementById('embedModal').addEventListener('click', function (e) {
+    document.getElementById('embedModal')?.addEventListener('click', function (e) {
       if (e.target === e.currentTarget) App.settings.embed.closeModal();
     });
 
+    // 侧边栏展开/收起
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) {
+      const isExpanded = localStorage.getItem('sidebarExpanded') === 'true';
+      if (isExpanded) sidebar.classList.add('expanded');
+    }
+  },
+
+  toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+    sidebar.classList.toggle('expanded');
+    localStorage.setItem('sidebarExpanded', sidebar.classList.contains('expanded'));
   },
 };
-
 document.addEventListener('DOMContentLoaded', App.init);

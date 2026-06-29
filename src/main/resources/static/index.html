@@ -1,11 +1,10 @@
-
 <!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>RAG Knowledge Base</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="lib/tailwind.min.js"></script>
   <script>
     tailwind.config = {
       theme: {
@@ -14,225 +13,290 @@
             primary: '#10a37f',
             'primary-hover': '#0d8a6a',
             surface: '#ffffff',
-            background: '#f9fafb',
+            background: '#f3f4f6', /* 背景稍微加深一点，凸显卡片 */
             muted: '#6b7280',
           }
         }
       }
     }
   </script>
+  <!-- 引入 Highlight.js 代码高亮暗黑主题样式 -->
+  <link rel="stylesheet" href="lib/highlight-github-dark.min.css">
   <link rel="stylesheet" href="app.css">
 </head>
 <body class="bg-background text-gray-900 h-screen flex overflow-hidden">
 
-  <!-- ==================== SIDEBAR ==================== -->
-  <aside class="w-14 bg-white border-r border-gray-200 flex flex-col items-center py-3 gap-1 flex-shrink-0 z-20">
-    <button onclick="App.switchTab('chat')" class="tab-btn active w-10 h-10 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors" title="对话">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+  <!-- ==================== SIDEBAR (可展开/收起) ==================== -->
+  <aside id="sidebar" class="sidebar w-14 bg-white border-r border-gray-200 flex flex-col py-4 gap-2 flex-shrink-0 z-20 shadow-sm transition-all duration-300">
+    <div class="flex items-center justify-center mb-4 px-2">
+      <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-white font-bold text-xs shadow-md shadow-primary/20 flex-shrink-0">KB</div>
+      <span class="sidebar-label ml-3 text-sm font-semibold text-gray-700 whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">知识库</span>
+    </div>
+    <button onclick="App.switchTab('chat')" class="tab-btn active flex items-center px-3 py-2.5 mx-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors" title="对话">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+      <span class="sidebar-label ml-3 text-sm whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">对话</span>
     </button>
-    <button onclick="App.switchTab('dashboard')" class="tab-btn w-10 h-10 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors" title="仪表盘">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+    <button onclick="App.switchTab('dashboard')" class="tab-btn flex items-center px-3 py-2.5 mx-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors" title="仪表盘">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+      <span class="sidebar-label ml-3 text-sm whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">仪表盘</span>
     </button>
-    <button onclick="App.switchTab('ingestion')" class="tab-btn w-10 h-10 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors" title="文档入库">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+    <button onclick="App.switchTab('ingestion')" class="tab-btn flex items-center px-3 py-2.5 mx-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors" title="文档入库">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+      <span class="sidebar-label ml-3 text-sm whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">文档入库</span>
     </button>
-    <button onclick="App.switchTab('settings')" class="tab-btn w-10 h-10 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors" title="设置">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    <button onclick="App.switchTab('settings')" class="tab-btn flex items-center px-3 py-2.5 mx-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors" title="设置">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      <span class="sidebar-label ml-3 text-sm whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">设置</span>
     </button>
-    <div class="mt-auto">
-      <div class="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center text-sm font-medium">U</div>
+    <div class="mt-auto pb-4 flex flex-col items-center gap-2">
+      <button onclick="App.toggleSidebar()" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors" title="展开/收起">
+        <svg id="sidebarToggleIcon" class="w-4 h-4 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+      </button>
+      <div class="w-9 h-9 rounded-full bg-gray-200 border-2 border-white shadow-sm flex items-center justify-center text-sm font-medium text-gray-600">我</div>
     </div>
   </aside>
 
   <!-- ==================== MAIN CONTENT ==================== -->
-  <main class="flex-1 flex flex-col min-w-0 h-screen">
+  <main class="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
 
     <!-- ========== CHAT PAGE ========== -->
-    <div id="tab-chat" class="flex-1 flex flex-col h-full">
-      <!-- Chat header -->
-      <header class="h-14 bg-white border-b border-gray-200 flex items-center px-6 flex-shrink-0">
-        <h1 class="text-base font-semibold text-gray-900">对话</h1>
+    <div id="tab-chat" class="flex-1 flex flex-col h-full relative">
+      <header class="h-14 bg-white/80 backdrop-blur-md border-b border-gray-100 flex items-center px-6 flex-shrink-0 z-10 sticky top-0">
+        <h1 class="text-base font-semibold text-gray-800 tracking-wide">智能对话</h1>
         <div class="ml-auto flex items-center gap-3">
-          <select id="modelSelect" onchange="App.chat.onModelChange()" class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary">
+          <select id="modelSelect" onchange="App.chat.onModelChange()" class="text-sm border-none bg-gray-50 text-gray-600 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-primary/20 cursor-pointer transition-colors hover:bg-gray-100">
             <option value="">加载模型中...</option>
           </select>
-          <button onclick="App.chat.clear()" class="text-sm text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors">清空对话</button>
+          <button onclick="App.chat.clear()" class="text-sm text-gray-500 hover:text-red-500 px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1">
+             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+             清空对话
+          </button>
         </div>
       </header>
 
-      <!-- Messages area -->
-      <div id="chatMessages" class="flex-1 overflow-y-auto px-4 py-6">
-        <div id="chatContainer" class="max-w-3xl mx-auto space-y-6">
-          <!-- Welcome state -->
-          <div id="chatWelcome" class="flex flex-col items-center justify-center py-20 text-center">
-            <div class="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-              <svg class="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+      <div id="chatMessages" class="flex-1 overflow-y-auto px-4 pt-6 pb-40 scroll-smooth custom-scrollbar">
+        <div id="chatContainer" class="max-w-4xl mx-auto space-y-8">
+          <div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in">
+            <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10">
+              <svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
             </div>
-            <h2 class="text-xl font-semibold text-gray-900 mb-2">有什么可以帮你的？</h2>
-            <p class="text-gray-500 text-sm max-w-md">基于你的知识库进行智能问答，支持 Markdown 格式回复和 Mermaid 图表渲染。</p>
+            <h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2>
+            <p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p>
           </div>
         </div>
       </div>
 
-      <!-- Input area -->
-      <div class="bg-white border-t border-gray-200 px-4 py-4 flex-shrink-0">
-        <div class="max-w-3xl mx-auto">
-          <div class="flex gap-3 items-end">
-            <div class="flex-1 relative">
-              <textarea id="chatInput" rows="1" placeholder="输入你的问题..." class="w-full border border-gray-300 rounded-xl px-4 py-3 pr-10 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm leading-relaxed" onkeydown="App.chat.onKeydown(event)"></textarea>
-            </div>
-            <button id="sendBtn" onclick="App.chat.send()" class="h-[46px] px-5 bg-primary hover:bg-primary-hover text-white rounded-xl font-medium text-sm transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0">
-              <span>发送</span>
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+      <div class="absolute bottom-0 left-0 right-0 pt-10 pb-6 px-4 bg-gradient-to-t from-background via-background to-transparent pointer-events-none z-10">
+        <div class="max-w-4xl mx-auto pointer-events-auto">
+          <div class="relative bg-white border border-gray-200 shadow-lg shadow-gray-200/50 rounded-2xl focus-within:ring-4 focus-within:ring-primary/10 focus-within:border-primary/40 transition-all duration-300">
+            <textarea id="chatInput" rows="1" placeholder="输入你的问题... (Shift + Enter 换行)" class="w-full bg-transparent rounded-2xl px-5 py-4 pr-16 resize-none focus:outline-none text-sm leading-relaxed max-h-[200px] overflow-y-auto custom-scrollbar" onkeydown="App.chat.onKeydown(event)"></textarea>
+            <button id="sendBtn" onclick="App.chat.send()" class="absolute right-3 bottom-3 h-8 w-8 bg-primary hover:bg-primary-hover text-white rounded-xl transition-all duration-200 flex items-center justify-center disabled:opacity-40 disabled:bg-gray-300 disabled:cursor-not-allowed">
+              <svg class="w-4 h-4 translate-x-[1px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
             </button>
           </div>
-          <p class="text-xs text-gray-400 mt-2 text-center">AI 生成的内容可能不准确，请核实重要信息。</p>
+          <p class="text-[11px] text-gray-400 mt-3 text-center tracking-wide">AI 生成的内容可能不准确，请核实重要信息及引用来源。</p>
         </div>
       </div>
     </div>
 
-    <!-- ========== DASHBOARD PAGE ========== -->
-    <div id="tab-dashboard" class="flex-1 overflow-y-auto hidden">
-      <div class="p-6 max-w-6xl mx-auto">
-        <h1 class="text-xl font-semibold text-gray-900 mb-5">仪表盘</h1>
-
-        <!-- Stats grid -->
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
-          <div class="bg-white rounded-xl border border-gray-200 p-5">
-            <p class="text-sm text-gray-500 mb-1">总文档块</p>
-            <p id="statChunks" class="text-2xl font-semibold text-gray-900">—</p>
+    <!-- ========== DASHBOARD PAGE (高密度网格布局) ========== -->
+    <div id="tab-dashboard" class="flex-1 overflow-y-auto hidden bg-background p-6 custom-scrollbar">
+      <div class="max-w-[1600px] mx-auto h-full flex flex-col gap-4">
+        <!-- 顶部：核心指标 -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 flex-shrink-0">
+          <div class="bg-white rounded-xl border border-gray-100 p-4 shadow-sm flex items-center gap-4">
+            <div class="w-12 h-12 rounded-lg bg-blue-50 flex items-center justify-center text-blue-500"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg></div>
+            <div><p class="text-xs text-gray-500 mb-0.5">总文档块 (Chunks)</p><p id="statChunks" class="text-xl font-bold text-gray-800">—</p></div>
           </div>
-          <div class="bg-white rounded-xl border border-gray-200 p-5">
-            <p class="text-sm text-gray-500 mb-1">已索引文件</p>
-            <p id="statFiles" class="text-2xl font-semibold text-gray-900">—</p>
+          <div class="bg-white rounded-xl border border-gray-100 p-4 shadow-sm flex items-center gap-4">
+            <div class="w-12 h-12 rounded-lg bg-green-50 flex items-center justify-center text-green-500"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg></div>
+            <div><p class="text-xs text-gray-500 mb-0.5">已索引文件</p><p id="statFiles" class="text-xl font-bold text-gray-800">—</p></div>
           </div>
-          <div class="bg-white rounded-xl border border-gray-200 p-5">
-            <p class="text-sm text-gray-500 mb-1">知识库项目</p>
-            <p id="statProjects" class="text-2xl font-semibold text-gray-900">—</p>
+          <div class="bg-white rounded-xl border border-gray-100 p-4 shadow-sm flex items-center gap-4">
+            <div class="w-12 h-12 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg></div>
+            <div><p class="text-xs text-gray-500 mb-0.5">知识库项目数</p><p id="statProjects" class="text-xl font-bold text-gray-800">—</p></div>
           </div>
-          <div class="bg-white rounded-xl border border-gray-200 p-5">
-            <p class="text-sm text-gray-500 mb-1">最后更新</p>
-            <p id="statLastTime" class="text-2xl font-semibold text-gray-900">—</p>
+          <div class="bg-white rounded-xl border border-gray-100 p-4 shadow-sm flex items-center gap-4">
+            <div class="w-12 h-12 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+            <div><p class="text-xs text-gray-500 mb-0.5">最后更新时间</p><p id="statLastTime" class="text-lg font-bold text-gray-800">—</p></div>
           </div>
         </div>
 
-        <!-- Architecture diagram -->
-        <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
-          <h2 class="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wider">系统架构</h2>
-          <div class="mermaid flex justify-center">
-            graph TD
-              A[用户输入] --> B[API Gateway]
-              B --> C{RAG 引擎}
-              C --> D[Embedding 模型]
-              C --> E[向量数据库]
-              D --> E
-              E --> F[LLM 生成]
-              F --> G[流式回复]
-          </div>
-        </div>
-
-        <!-- ECharts -->
-        <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
-          <h2 class="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wider">各项目代码量统计</h2>
-          <div id="chartContainer" class="w-full" style="height: 360px;"></div>
-        </div>
-
-        <!-- Recent QA -->
-        <div class="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 class="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wider">最近问答记录</h2>
-          <div id="recentQA" class="space-y-3">
-            <div class="text-sm text-gray-400 text-center py-8">加载中...</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ========== INGESTION PAGE ========== -->
-    <div id="tab-ingestion" class="flex-1 overflow-y-auto hidden">
-      <div class="p-6 max-w-4xl mx-auto">
-        <h1 class="text-xl font-semibold text-gray-900 mb-5">文档入库</h1>
-
-        <!-- Project config -->
-        <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
-          <h2 class="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wider">添加项目</h2>
-          <div class="flex flex-col sm:flex-row gap-3">
-            <input id="projectName" type="text" placeholder="项目名称" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary">
-            <input id="projectPath" type="text" placeholder="本地路径 (如: /docs/project-a)" class="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary">
-            <button onclick="App.ingestion.addProject()" class="px-5 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors whitespace-nowrap">添加项目</button>
-          </div>
-          <div id="projectList" class="mt-4 space-y-2"></div>
-        </div>
-
-        <!-- Start ingestion -->
-        <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-sm font-semibold text-gray-900 uppercase tracking-wider">开始入库</h2>
-            <button id="ingestBtn" onclick="App.ingestion.start()" class="px-5 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors">开始入库</button>
-          </div>
-          <div id="ingestProgress" class="hidden">
-            <div class="flex items-center justify-between text-sm mb-2">
-              <span id="ingestStatus" class="text-gray-600">准备中...</span>
-              <span id="ingestPercent" class="text-gray-900 font-medium">0%</span>
+        <!-- 主体区域：左侧图表，右侧动态 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-[500px]">
+          <!-- 左侧：图表与架构 -->
+          <div class="col-span-2 flex flex-col gap-4">
+            <div class="bg-white rounded-xl border border-gray-100 p-5 shadow-sm flex-1 flex flex-col">
+              <h2 class="text-sm font-semibold text-gray-800 mb-4 flex items-center gap-2"><div class="w-1.5 h-4 bg-primary rounded-full"></div>各项目代码量统计</h2>
+              <div id="chartContainer" class="w-full flex-1 min-h-[250px]"></div>
             </div>
-            <div class="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-              <div id="ingestBar" class="bg-primary h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
-            </div>
-            <div class="flex justify-between mt-2 text-xs text-gray-500">
-              <span id="ingestFile">—</span>
-              <span id="ingestCount">0 / 0 文件</span>
+            <div class="bg-white rounded-xl border border-gray-100 p-5 shadow-sm h-64 flex flex-col">
+              <h2 class="text-sm font-semibold text-gray-800 mb-2 flex items-center gap-2"><div class="w-1.5 h-4 bg-primary rounded-full"></div>系统逻辑架构</h2>
+              <div class="flex-1 overflow-hidden flex items-center justify-center">
+                <div class="mermaid transform scale-90 origin-center border-none shadow-none">
+                  graph LR
+                    A[输入] --> B(网关)
+                    B --> C{RAG 引擎}
+                    C --> D[向量检索] & E[混合检索]
+                    D --> F[LLM 生成]
+                    E --> F
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-
-        <!-- Log -->
-        <div class="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 class="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wider">实时日志</h2>
-          <div id="ingestLog" class="bg-gray-900 text-gray-300 rounded-lg p-4 font-mono text-xs leading-relaxed h-64 overflow-y-auto">
-            <div class="text-gray-500">等待入库任务...</div>
+          <!-- 右侧：问答记录 -->
+          <div class="col-span-1 bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col h-full overflow-hidden">
+            <div class="p-4 border-b border-gray-50 bg-gray-50/50">
+              <h2 class="text-sm font-semibold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-primary rounded-full"></div>最近问答记录</h2>
+            </div>
+            <div id="recentQA" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+              <div class="text-sm text-gray-400 text-center py-8">加载中...</div>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ========== SETTINGS PAGE ========== -->
-    <div id="tab-settings" class="flex-1 overflow-y-auto hidden">
-      <div class="p-6 max-w-5xl mx-auto">
-        <h1 class="text-xl font-semibold text-gray-900 mb-5">设置</h1>
-
-        <!-- RAG Config -->
-        <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-sm font-semibold text-gray-900 uppercase tracking-wider">RAG 配置</h2>
-            <button onclick="App.settings.rag.save()" class="text-sm px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors">保存配置</button>
+    <!-- ========== INGESTION PAGE (左右分栏，工作流布局) ========== -->
+    <div id="tab-ingestion" class="flex-1 overflow-y-auto hidden bg-background p-6 custom-scrollbar">
+      <div class="max-w-[1600px] mx-auto h-full flex flex-col lg:flex-row gap-4">
+        
+        <!-- 左侧：项目配置区 (1/3) -->
+        <div class="w-full lg:w-[35%] bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col overflow-hidden h-[calc(100vh-3rem)]">
+          <div class="p-4 border-b border-gray-100 bg-gray-50">
+            <h2 class="text-sm font-semibold text-gray-800">目标项目配置</h2>
+            <p class="text-xs text-gray-500 mt-1">添加需要被知识库索引的本地项目目录</p>
           </div>
-          <div id="ragConfig" class="space-y-4"></div>
-        </div>
-
-        <!-- LLM Config -->
-        <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-sm font-semibold text-gray-900 uppercase tracking-wider">LLM 配置</h2>
-            <button onclick="App.settings.llm.openModal()" class="text-sm px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors">添加配置</button>
+          <div class="p-4 border-b border-gray-100 flex flex-col gap-3">
+            <input id="projectName" type="text" placeholder="项目名称 (例如: core-backend)" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 outline-none transition-all">
+            <input id="projectPath" type="text" placeholder="绝对路径 (例如: D:\code\project)" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 outline-none transition-all">
+            <button onclick="App.ingestion.addProject()" class="w-full py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm font-medium transition-colors">添加至队列</button>
           </div>
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead><tr class="border-b border-gray-200 text-left text-gray-500"><th class="pb-3 font-medium">名称</th><th class="pb-3 font-medium">模型</th><th class="pb-3 font-medium">Base URL</th><th class="pb-3 font-medium">流式</th><th class="pb-3 font-medium">状态</th><th class="pb-3 font-medium text-right">操作</th></tr></thead>
-              <tbody id="llmTable" class="divide-y divide-gray-100"></tbody>
-            </table>
+          <div class="flex-1 overflow-y-auto p-4 bg-gray-50/30 custom-scrollbar">
+            <div id="projectList" class="space-y-3">
+              <!-- 项目列表项占位 -->
+            </div>
           </div>
         </div>
 
-        <!-- Embedding Config -->
-        <div class="bg-white rounded-xl border border-gray-200 p-5">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-sm font-semibold text-gray-900 uppercase tracking-wider">Embedding 配置</h2>
-            <button onclick="App.settings.embed.openModal()" class="text-sm px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors">添加配置</button>
+        <!-- 右侧：工作流区 (2/3) -->
+        <div class="w-full lg:w-[65%] bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col overflow-hidden h-[calc(100vh-3rem)] relative">
+          
+          <!-- 工作流导航头部 -->
+          <div class="flex items-center justify-between p-4 border-b border-gray-100 bg-gray-50">
+            <div class="flex items-center gap-6 text-sm font-medium">
+              <div id="nav-step1" class="text-primary flex items-center gap-2"><span class="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-xs">1</span> 路径校验</div>
+              <div class="w-8 h-px bg-gray-300"></div>
+              <div id="nav-step2" class="text-gray-400 flex items-center gap-2 transition-colors"><span class="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-xs">2</span> 类型筛选</div>
+              <div class="w-8 h-px bg-gray-300"></div>
+              <div id="nav-step3" class="text-gray-400 flex items-center gap-2 transition-colors"><span class="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-xs">3</span> 入库处理</div>
+            </div>
+            <button id="mainIngestBtn" onclick="App.ingestion.startScan()" class="px-5 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-all shadow-sm shadow-primary/30">开始校验路径</button>
           </div>
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead><tr class="border-b border-gray-200 text-left text-gray-500"><th class="pb-3 font-medium">名称</th><th class="pb-3 font-medium">类型</th><th class="pb-3 font-medium">Base URL</th><th class="pb-3 font-medium">状态</th><th class="pb-3 font-medium text-right">操作</th></tr></thead>
-              <tbody id="embedTable" class="divide-y divide-gray-100"></tbody>
-            </table>
+
+          <!-- 步骤内容区 -->
+          <div class="flex-1 p-6 overflow-y-auto relative custom-scrollbar bg-white">
+            
+            <!-- Step 1: 初始空状态 -->
+            <div id="step-scan" class="absolute inset-0 flex flex-col items-center justify-center text-center p-6 transition-opacity duration-300">
+              <div class="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center text-gray-300 mb-4 border border-gray-100"><svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg></div>
+              <h3 class="text-lg font-medium text-gray-800 mb-1">等待执行</h3>
+              <p class="text-sm text-gray-500 max-w-sm">请在左侧添加项目后，点击右上角开始校验路径。系统将扫描可索引的文件类型。</p>
+            </div>
+
+            <!-- Step 2: 文件类型选择 -->
+            <div id="step-select" class="absolute inset-0 p-6 opacity-0 pointer-events-none transition-opacity duration-300 bg-white flex flex-col">
+              <h3 class="text-base font-semibold text-gray-800 mb-2">选择要处理的文件类型</h3>
+              <p class="text-sm text-gray-500 mb-6">扫描到以下包含内容的文件格式，请勾选需要入库的格式：</p>
+              <div id="fileTypeContainer" class="flex flex-wrap gap-3 mb-6">
+                 <!-- JS 动态渲染 Checkbox -->
+              </div>
+              <div class="mt-auto pt-4 border-t border-gray-100 flex justify-end">
+                <button onclick="App.ingestion.confirmTypesAndProcess()" class="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium shadow-sm transition-colors flex items-center gap-2">
+                  确认并开始入库 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Step 3: 进度条与日志区 -->
+            <div id="step-process" class="absolute inset-0 p-6 opacity-0 pointer-events-none transition-opacity duration-300 bg-white flex flex-col">
+              <div class="mb-6 bg-gray-50 p-5 rounded-xl border border-gray-100">
+                <div class="flex items-center justify-between text-sm mb-3">
+                  <span id="ingestStatus" class="font-medium text-gray-800">处理中...</span>
+                  <div class="flex items-center gap-4">
+                    <span class="text-gray-500 text-xs bg-white px-2 py-1 rounded border shadow-sm">预计剩余: <span id="ingestETA" class="font-mono text-primary font-medium">--:--</span></span>
+                    <span id="ingestPercent" class="text-primary font-bold">0%</span>
+                  </div>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden mb-3">
+                  <div id="ingestBar" class="bg-primary h-2.5 rounded-full transition-all duration-300 relative overflow-hidden" style="width: 0%">
+                    <div class="absolute inset-0 bg-white/20 w-full h-full animate-[shimmer_1.5s_infinite]" style="background-image: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent); transform: skewX(-20deg);"></div>
+                  </div>
+                </div>
+                <div class="flex justify-between text-xs text-gray-500">
+                  <span id="ingestFile" class="truncate max-w-[70%]" title="准备中">—</span>
+                  <span id="ingestCount" class="font-mono">0 / 0</span>
+                </div>
+              </div>
+              <div class="flex-1 bg-gray-900 rounded-xl p-4 flex flex-col border border-gray-800 shadow-inner overflow-hidden">
+                <div class="text-gray-400 text-xs mb-2 pb-2 border-b border-gray-700 flex justify-between"><span>执行日志 (Terminal)</span> <span class="text-green-400 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span> Active</span></div>
+                <div id="ingestLog" class="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed custom-scrollbar text-gray-300 space-y-1"></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== SETTINGS PAGE (紧凑网格布局) ========== -->
+    <div id="tab-settings" class="flex-1 overflow-y-auto hidden bg-background p-6 custom-scrollbar">
+      <div class="max-w-[1600px] mx-auto">
+        <!-- 头部说明 -->
+        <div class="mb-6">
+          <h1 class="text-xl font-bold text-gray-800">系统设置</h1>
+          <p class="text-sm text-gray-500 mt-1">管理 RAG 策略参数、大语言模型及向量检索配置。</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          <!-- 左侧：RAG配置 (占据独立列) -->
+          <div class="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
+            <div class="flex items-center justify-between mb-5 border-b border-gray-50 pb-3">
+              <h2 class="text-sm font-bold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-primary rounded-full"></div>RAG 策略与切片配置</h2>
+              <button onclick="App.settings.rag.save()" class="text-xs px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors">保存策略</button>
+            </div>
+            <div id="ragConfig" class="space-y-2"></div>
+          </div>
+
+          <!-- 右侧：模型与向量配置上下堆叠 -->
+          <div class="flex flex-col gap-6">
+            <!-- LLM Config -->
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col overflow-hidden">
+              <div class="p-4 border-b border-gray-50 bg-gray-50/50 flex items-center justify-between">
+                <h2 class="text-sm font-bold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-blue-500 rounded-full"></div>LLM (大语言模型) 接入</h2>
+                <button onclick="App.settings.llm.openModal()" class="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors font-medium">+ 新增模型</button>
+              </div>
+              <div class="overflow-x-auto custom-scrollbar">
+                <table class="w-full text-xs text-left whitespace-nowrap">
+                  <thead class="bg-gray-50 text-gray-500"><tr class="border-b border-gray-100"><th class="px-4 py-2 font-medium">名称</th><th class="px-4 py-2 font-medium">基座模型</th><th class="px-4 py-2 font-medium">状态</th><th class="px-4 py-2 font-medium text-right">操作</th></tr></thead>
+                  <tbody id="llmTable" class="divide-y divide-gray-50 text-gray-600"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Embedding Config -->
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col overflow-hidden">
+              <div class="p-4 border-b border-gray-50 bg-gray-50/50 flex items-center justify-between">
+                <h2 class="text-sm font-bold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-purple-500 rounded-full"></div>Embedding (向量模型) 接入</h2>
+                <button onclick="App.settings.embed.openModal()" class="text-xs px-3 py-1.5 bg-purple-50 text-purple-600 hover:bg-purple-100 border border-purple-200 rounded-md transition-colors font-medium">+ 新增向量</button>
+              </div>
+              <div class="overflow-x-auto custom-scrollbar">
+                <table class="w-full text-xs text-left whitespace-nowrap">
+                  <thead class="bg-gray-50 text-gray-500"><tr class="border-b border-gray-100"><th class="px-4 py-2 font-medium">名称</th><th class="px-4 py-2 font-medium">维度</th><th class="px-4 py-2 font-medium">状态</th><th class="px-4 py-2 font-medium text-right">操作</th></tr></thead>
+                  <tbody id="embedTable" class="divide-y divide-gray-50 text-gray-600"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -293,13 +357,14 @@
       <p id="loadingText" class="loading-text">处理中...</p>
     </div>
   </div>
-
-  <!-- Toast container -->
+  <!-- Toast -->
   <div id="toastContainer"></div>
 
+  <!-- Scripts -->
   <script src="lib/echarts.min.js"></script>
   <script src="lib/mermaid.min.js"></script>
   <script src="lib/marked.min.js"></script>
+  <script src="lib/highlight.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
