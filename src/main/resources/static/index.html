@@ -46,6 +46,10 @@
       <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
       <span class="sidebar-label ml-3 text-sm whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">文档入库</span>
     </button>
+    <button onclick="App.switchTab('evaluation')" class="tab-btn flex items-center px-3 py-2.5 mx-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors" title="评估">
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+      <span class="sidebar-label ml-3 text-sm whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">评估</span>
+    </button>
     <button onclick="App.switchTab('settings')" class="tab-btn flex items-center px-3 py-2.5 mx-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors" title="设置">
       <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
       <span class="sidebar-label ml-3 text-sm whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">设置</span>
@@ -278,6 +282,100 @@
               </div>
             </div>
 
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== EVALUATION PAGE ========== -->
+    <div id="tab-evaluation" class="flex-1 overflow-y-auto hidden bg-background p-6 custom-scrollbar">
+      <div class="max-w-[1600px] mx-auto">
+        <div class="mb-6 flex items-center justify-between">
+          <div>
+            <h1 class="text-xl font-bold text-gray-800">评估中心</h1>
+            <p class="text-sm text-gray-500 mt-1">管理测试集、执行检索评估、查看指标报告。</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- 左侧：测试集管理 -->
+          <div class="lg:col-span-1 flex flex-col gap-4">
+            <!-- 测试集列表 -->
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col overflow-hidden">
+              <div class="p-4 border-b border-gray-50 bg-gray-50/50 flex items-center justify-between">
+                <h2 class="text-sm font-bold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-blue-500 rounded-full"></div>测试集</h2>
+                <button onclick="App.evaluation.openCreateTestsetModal()" class="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors font-medium">+ 新建</button>
+              </div>
+              <div id="testsetList" class="overflow-y-auto max-h-[200px] custom-scrollbar">
+                <div class="text-sm text-gray-400 text-center py-6">加载中...</div>
+              </div>
+            </div>
+
+            <!-- 测试用例 -->
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col overflow-hidden flex-1">
+              <div class="p-4 border-b border-gray-50 bg-gray-50/50 flex items-center justify-between">
+                <h2 class="text-sm font-bold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-purple-500 rounded-full"></div>测试用例 <span id="caseCount" class="text-xs font-normal text-gray-400">(0)</span></h2>
+                <button onclick="App.evaluation.openAddCaseModal()" id="addCaseBtn" disabled class="text-xs px-3 py-1.5 bg-purple-50 text-purple-600 hover:bg-purple-100 border border-purple-200 rounded-md transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed">+ 添加</button>
+              </div>
+              <div id="caseList" class="overflow-y-auto flex-1 custom-scrollbar">
+                <div class="text-sm text-gray-400 text-center py-6">请先选择测试集</div>
+              </div>
+            </div>
+
+            <!-- 执行评估 -->
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+              <div class="flex items-center gap-3">
+                <div class="flex-1">
+                  <label class="text-xs text-gray-500 mb-1 block">K 值（检索 Top-K）</label>
+                  <input id="evalK" type="number" value="5" min="1" max="50" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none">
+                </div>
+                <button onclick="App.evaluation.runEval()" id="runEvalBtn" disabled class="mt-5 px-5 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">执行评估</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧：评估结果 -->
+          <div class="lg:col-span-2 flex flex-col gap-4">
+            <!-- 评估进度 -->
+            <div id="evalProgress" class="hidden bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+              <div class="flex items-center justify-between text-sm mb-3">
+                <span id="evalStatus" class="font-medium text-gray-800">评估中...</span>
+                <span id="evalProgressText" class="text-gray-500">0/0</span>
+              </div>
+              <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                <div id="evalProgressBar" class="bg-primary h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- 指标卡片 -->
+            <div id="evalMetrics" class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+                <div class="text-2xl font-bold text-blue-600" id="metricP@K">—</div>
+                <div class="text-xs text-gray-500 mt-1">Precision@K</div>
+              </div>
+              <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+                <div class="text-2xl font-bold text-green-600" id="metricRecall">—</div>
+                <div class="text-xs text-gray-500 mt-1">Recall</div>
+              </div>
+              <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+                <div class="text-2xl font-bold text-purple-600" id="metricMRR">—</div>
+                <div class="text-xs text-gray-500 mt-1">MRR</div>
+              </div>
+              <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-center">
+                <div class="text-2xl font-bold text-amber-600" id="metricHitRate">—</div>
+                <div class="text-xs text-gray-500 mt-1">Hit Rate</div>
+              </div>
+            </div>
+
+            <!-- 逐题明细表 -->
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col overflow-hidden flex-1">
+              <div class="p-4 border-b border-gray-50 bg-gray-50/50">
+                <h2 class="text-sm font-bold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-gray-500 rounded-full"></div>逐题明细</h2>
+              </div>
+              <div id="evalDetails" class="overflow-y-auto flex-1 custom-scrollbar">
+                <div class="text-sm text-gray-400 text-center py-12">暂无评估结果</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

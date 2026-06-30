@@ -36,6 +36,9 @@ public class EvaluationResultEntity {
     @Column(name = "latency_ms")
     private Long latencyMs;
 
+    @Column(name = "parse_warning", length = 512)
+    private String parseWarning;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -60,5 +63,7 @@ public class EvaluationResultEntity {
     public void setFirstHitRank(Integer firstHitRank) { this.firstHitRank = firstHitRank; }
     public Long getLatencyMs() { return latencyMs; }
     public void setLatencyMs(Long latencyMs) { this.latencyMs = latencyMs; }
+    public String getParseWarning() { return parseWarning; }
+    public void setParseWarning(String parseWarning) { this.parseWarning = parseWarning; }
     public Instant getCreatedAt() { return createdAt; }
 }

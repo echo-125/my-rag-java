@@ -74,6 +74,9 @@ public class EvaluationController {
         Map<String, Object> report = new LinkedHashMap<>();
         report.put("batchId", batch.getId().toString());
         report.put("testsetId", batch.getTestsetId().toString());
+        String testsetName = service.getTestsetById(batch.getTestsetId())
+                .map(ts -> ts.getName()).orElse("未知");
+        report.put("testsetName", testsetName);
         report.put("status", batch.getStatus());
         report.put("totalCases", batch.getTotalCases());
         report.put("completedCases", batch.getCompletedCases());
@@ -92,6 +95,7 @@ public class EvaluationController {
             m.put("hit", r.getHit());
             m.put("firstHitRank", r.getFirstHitRank());
             m.put("latencyMs", r.getLatencyMs());
+            if (r.getParseWarning() != null) m.put("parseWarning", r.getParseWarning());
             return m;
         }).toList());
         return report;
@@ -101,12 +105,13 @@ public class EvaluationController {
 
     @GetMapping("/testset")
     public List<Map<String, Object>> listTestsets() {
+        Map<UUID, Long> countMap = service.getCaseCountMap();
         return service.listTestsets().stream().map(ts -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", ts.getId().toString());
             m.put("name", ts.getName());
             m.put("description", ts.getDescription());
-            m.put("caseCount", service.listTestcases(ts.getId()).size());
+            m.put("caseCount", countMap.getOrDefault(ts.getId(), 0L));
             m.put("createdAt", ts.getCreatedAt().toString());
             return m;
         }).toList();

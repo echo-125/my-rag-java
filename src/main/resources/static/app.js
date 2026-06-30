@@ -87,6 +87,7 @@ const App = {
     if (tabName === 'chat') { App.chat.loadModelList(); App.chat.loadSessions(); }
     if (tabName === 'ingestion') App.ingestion.loadProjects();
     if (tabName === 'settings') { App.settings.rag.load(); App.settings.llm.load(); App.settings.embed.load(); App.settings.rerank.load(); }
+    if (tabName === 'evaluation') App.evaluation.init();
   },
 
   // ==================== 对话功能 ====================
@@ -249,6 +250,7 @@ const App = {
       App.state.currentSessionId = App.state.currentSessionId || App.utils.genId();
       App.state.currentSources = []; // 清空本次溯源
 
+      let fullText = '';
       try {
         const resp = await App.utils.fetchWithRetry('/api/chat/stream', {
           method: 'POST',
@@ -260,7 +262,6 @@ const App = {
 
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
-        let fullText = '';
 
         while (true) {
           const { done, value } = await reader.read();
@@ -431,11 +432,13 @@ const App = {
     async loadEvalReport() {
       const container = document.getElementById('evalReport');
       if (!container) return;
+      const card = container.closest('.bg-white');
       try {
         const resp = await App.utils.fetchWithRetry('/api/evaluation/report');
         const data = await resp.json();
         if (!data.found) {
-          container.innerHTML = '<div class="text-sm text-gray-400 text-center py-6">暂无评估报告<br><span class="text-xs">可通过 POST /api/evaluation/run 执行评估</span></div>';
+          container.innerHTML = '<div class="text-sm text-gray-400 text-center py-6">暂无评估报告<br><span class="text-xs">点击进入评估中心创建测试集并执行</span></div>';
+          if (card) { card.style.cursor = 'pointer'; card.onclick = () => App.switchTab('evaluation'); }
           return;
         }
         container.innerHTML = `
@@ -445,9 +448,11 @@ const App = {
             <div class="text-center p-2 bg-purple-50 rounded-lg"><div class="text-lg font-bold text-purple-700">${data.mrr ? data.mrr.toFixed(3) : '—'}</div><div class="text-xs text-gray-500">MRR</div></div>
             <div class="text-center p-2 bg-amber-50 rounded-lg"><div class="text-lg font-bold text-amber-700">${data.avgLatencyMs || '—'}ms</div><div class="text-xs text-gray-500">平均延迟</div></div>
           </div>
-          <div class="text-xs text-gray-400 text-center">${data.completedCases}/${data.totalCases} 题 · ${data.evaluatedAt ? new Date(data.evaluatedAt).toLocaleString() : ''}</div>`;
+          <div class="text-xs text-gray-400 text-center">${data.completedCases}/${data.totalCases} 题 · ${data.evaluatedAt ? new Date(data.evaluatedAt).toLocaleString() : ''} · <span class="text-primary cursor-pointer hover:underline">查看详情 →</span></div>`;
+        if (card) { card.style.cursor = 'pointer'; card.onclick = () => App.switchTab('evaluation'); }
       } catch (e) {
-        container.innerHTML = '<div class="text-sm text-gray-400 text-center py-6">暂无评估报告</div>';
+        container.innerHTML = '<div class="text-sm text-gray-400 text-center py-6">暂无评估报告<br><span class="text-xs">点击进入评估中心创建测试集并执行</span></div>';
+        if (card) { card.style.cursor = 'pointer'; card.onclick = () => App.switchTab('evaluation'); }
       }
     },
 
@@ -983,6 +988,249 @@ const App = {
       container.insertAdjacentHTML('beforeend', `<div class="${colors[type]}">[${time}] ${msg}</div>`);
       container.scrollTop = container.scrollHeight;
     }
+  },
+
+  // ==================== 评 估 ====================
+  evaluation: {
+    currentTestsetId: null,
+    currentBatchId: null,
+    pollTimer: null,
+
+    safeParse(json, fallback = []) {
+      try { return JSON.parse(json || '[]'); } catch { return fallback; }
+    },
+
+    async init() {
+      await this.loadTestsets();
+      this.loadLatestReport();
+    },
+
+    // ─── 测试集管理 ───
+    async loadTestsets() {
+      try {
+        const resp = await App.utils.fetchWithRetry('/api/evaluation/testset');
+        const testsets = await resp.json();
+        const list = document.getElementById('testsetList');
+        if (testsets.length === 0) {
+          list.innerHTML = '<div class="text-sm text-gray-400 text-center py-6">暂无测试集</div>';
+          return;
+        }
+        list.innerHTML = testsets.map(ts => `
+          <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-50 hover:bg-gray-50/50 cursor-pointer transition-colors ${ts.id === this.currentTestsetId ? 'bg-blue-50' : ''}"
+               onclick="App.evaluation.selectTestset('${ts.id}', '${App.utils.escHtml(ts.name)}')">
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium text-gray-800 truncate">${App.utils.escHtml(ts.name)}</div>
+              <div class="text-xs text-gray-400">${ts.caseCount} 条用例</div>
+            </div>
+            <button onclick="event.stopPropagation();App.evaluation.deleteTestset('${ts.id}','${App.utils.escHtml(ts.name)}')" class="text-gray-400 hover:text-red-500 p-1 rounded" title="删除">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+          </div>
+        `).join('');
+      } catch (e) { console.error('加载测试集失败:', e); }
+    },
+
+    async selectTestset(id, name) {
+      this.currentTestsetId = id;
+      document.getElementById('addCaseBtn').disabled = false;
+      document.getElementById('runEvalBtn').disabled = false;
+      await this.loadTestsets();
+      await this.loadCases(id);
+    },
+
+    async deleteTestset(id, name) {
+      if (!confirm('确定删除测试集 "' + name + '"？')) return;
+      try {
+        await fetch('/api/evaluation/testset/' + id, { method: 'DELETE' });
+        if (this.currentTestsetId === id) {
+          this.currentTestsetId = null;
+          document.getElementById('addCaseBtn').disabled = true;
+          document.getElementById('runEvalBtn').disabled = true;
+          document.getElementById('caseList').innerHTML = '<div class="text-sm text-gray-400 text-center py-6">请先选择测试集</div>';
+          document.getElementById('caseCount').textContent = '(0)';
+        }
+        this.loadTestsets();
+        App.utils.toast('测试集已删除', 'success');
+      } catch (e) { App.utils.toast('删除失败', 'error'); }
+    },
+
+    openCreateTestsetModal() {
+      const name = prompt('输入测试集名称：');
+      if (!name) return;
+      const desc = prompt('输入描述（可选）：') || '';
+      this.createTestset(name, desc);
+    },
+
+    async createTestset(name, description) {
+      try {
+        const resp = await fetch('/api/evaluation/testset', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, description: description || '' })
+        });
+        if (resp.ok) { this.loadTestsets(); App.utils.toast('创建成功', 'success'); }
+      } catch (e) { App.utils.toast('创建失败', 'error'); }
+    },
+
+    // ─── 测试用例管理 ───
+    async loadCases(testsetId) {
+      try {
+        const resp = await App.utils.fetchWithRetry('/api/evaluation/testset/' + testsetId + '/cases');
+        const cases = await resp.json();
+        document.getElementById('caseCount').textContent = '(' + cases.length + ')';
+        const list = document.getElementById('caseList');
+        if (cases.length === 0) {
+          list.innerHTML = '<div class="text-sm text-gray-400 text-center py-6">暂无用例，点击"添加"创建</div>';
+          return;
+        }
+        list.innerHTML = cases.map(c => {
+          const files = this.safeParse(c.expectedFiles);
+          const tags = this.safeParse(c.tags);
+          return `<div class="px-4 py-3 border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex-1 min-w-0">
+                <div class="text-sm text-gray-800">${App.utils.escHtml(c.question)}</div>
+                <div class="text-xs text-gray-400 mt-1">期望文件：${files.map(f => App.utils.escHtml(f.split('/').pop())).join(', ')}</div>
+                ${tags.length ? '<div class="flex gap-1 mt-1">' + tags.map(t => '<span class="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">' + App.utils.escHtml(t) + '</span>').join('') + '</div>' : ''}
+              </div>
+              <button onclick="App.evaluation.deleteCase('${c.id}')" class="text-gray-400 hover:text-red-500 p-1 rounded flex-shrink-0" title="删除">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>`;
+        }).join('');
+      } catch (e) { console.error('加载用例失败:', e); }
+    },
+
+    openAddCaseModal() {
+      if (!this.currentTestsetId) { App.utils.toast('请先选择测试集', 'warning'); return; }
+      const question = prompt('输入测试问题：');
+      if (!question) return;
+      const files = prompt('期望命中的文件路径（逗号分隔）：');
+      if (!files) return;
+      const tags = prompt('标签（逗号分隔，可选）：') || '';
+      this.addCase(question, files.split(',').map(f => f.trim()), tags.split(',').map(t => t.trim()).filter(Boolean));
+    },
+
+    async addCase(question, expectedFiles, tags) {
+      try {
+        await fetch('/api/evaluation/testset/' + this.currentTestsetId + '/cases', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, expectedFiles: JSON.stringify(expectedFiles), tags: JSON.stringify(tags) })
+        });
+        this.loadCases(this.currentTestsetId);
+        this.loadTestsets();
+        App.utils.toast('用例已添加', 'success');
+      } catch (e) { App.utils.toast('添加失败', 'error'); }
+    },
+
+    async deleteCase(id) {
+      if (!confirm('确定删除此用例？')) return;
+      try {
+        await fetch('/api/evaluation/testcase/' + id, { method: 'DELETE' });
+        this.loadCases(this.currentTestsetId);
+        this.loadTestsets();
+        App.utils.toast('用例已删除', 'success');
+      } catch (e) { App.utils.toast('删除失败', 'error'); }
+    },
+
+    // ─── 执行评估 ───
+    async runEval() {
+      if (!this.currentTestsetId) { App.utils.toast('请先选择测试集', 'warning'); return; }
+      const runBtn = document.getElementById('runEvalBtn');
+      if (runBtn.disabled) return;
+      runBtn.disabled = true;
+      runBtn.textContent = '评估中...';
+      const k = parseInt(document.getElementById('evalK').value) || 5;
+      try {
+        const resp = await fetch('/api/evaluation/run', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ testsetId: this.currentTestsetId, k })
+        });
+        const data = await resp.json();
+        if (data.error) { App.utils.toast(data.error, 'error'); runBtn.disabled = false; runBtn.textContent = '执行评估'; return; }
+        this.currentBatchId = data.batchId;
+        document.getElementById('evalProgress').classList.remove('hidden');
+        document.getElementById('evalStatus').textContent = '评估中...';
+        document.getElementById('evalProgressBar').style.width = '0%';
+        this.startPolling(data.batchId);
+      } catch (e) { App.utils.toast('启动评估失败: ' + e.message, 'error'); }
+    },
+
+    startPolling(batchId) {
+      if (this.pollTimer) clearInterval(this.pollTimer);
+      this.pollTimer = setInterval(() => this.pollStatus(batchId), 2000);
+    },
+
+    resetRunBtn() {
+      const btn = document.getElementById('runEvalBtn');
+      if (btn) { btn.disabled = false; btn.textContent = '执行评估'; }
+    },
+
+    async pollStatus(batchId) {
+      try {
+        const resp = await App.utils.fetchWithRetry('/api/evaluation/run/' + batchId + '/status');
+        const data = await resp.json();
+        document.getElementById('evalStatus').textContent = '评估中... ' + data.progress;
+        document.getElementById('evalProgressText').textContent = data.progress;
+        const pct = data.totalCases > 0 ? (data.completedCases / data.totalCases * 100) : 0;
+        document.getElementById('evalProgressBar').style.width = pct + '%';
+
+        if (data.status === 'completed') {
+          clearInterval(this.pollTimer);
+          document.getElementById('evalStatus').textContent = '评估完成';
+          document.getElementById('evalProgressBar').style.width = '100%';
+          if (data.result) this.renderReport(data.result);
+          App.utils.toast('评估完成', 'success');
+          this.resetRunBtn();
+        } else if (data.status === 'failed') {
+          clearInterval(this.pollTimer);
+          document.getElementById('evalStatus').textContent = '评估失败';
+          App.utils.toast('评估失败: ' + (data.error || ''), 'error');
+          this.resetRunBtn();
+        }
+      } catch (e) { console.error('轮询失败:', e); }
+    },
+
+    // ─── 报告展示 ───
+    async loadLatestReport() {
+      try {
+        const resp = await App.utils.fetchWithRetry('/api/evaluation/report');
+        const data = await resp.json();
+        if (data.found) this.renderReport(data);
+      } catch (e) {}
+    },
+
+    renderReport(report) {
+      document.getElementById('metricP@K').textContent = report.precisionAtK != null ? (report.precisionAtK * 100).toFixed(1) + '%' : '—';
+      document.getElementById('metricRecall').textContent = report.recall != null ? (report.recall * 100).toFixed(1) + '%' : '—';
+      document.getElementById('metricMRR').textContent = report.mrr != null ? report.mrr.toFixed(3) : '—';
+      document.getElementById('metricHitRate').textContent = report.hitRate != null ? (report.hitRate * 100).toFixed(1) + '%' : '—';
+
+      const details = document.getElementById('evalDetails');
+      if (!report.results || report.results.length === 0) {
+        details.innerHTML = '<div class="text-sm text-gray-400 text-center py-12">暂无明细</div>';
+        return;
+      }
+      details.innerHTML = `<table class="w-full text-xs">
+        <thead class="bg-gray-50 text-gray-500 sticky top-0"><tr class="border-b border-gray-100">
+          <th class="px-4 py-2 text-left font-medium">问题</th>
+          <th class="px-4 py-2 text-center font-medium w-16">命中</th>
+          <th class="px-4 py-2 text-center font-medium w-16">排名</th>
+          <th class="px-4 py-2 text-center font-medium w-20">耗时</th>
+          <th class="px-4 py-2 text-left font-medium">期望文件</th>
+        </tr></thead>
+        <tbody class="divide-y divide-gray-50">${report.results.map(r => {
+          const expected = App.evaluation.safeParse(r.expectedFiles);
+          const retrieved = App.evaluation.safeParse(r.retrievedFiles);
+          return `<tr class="hover:bg-gray-50/50 ${r.parseWarning ? 'bg-red-50/30' : ''}">
+            <td class="px-4 py-2.5 text-gray-800 max-w-[200px] truncate" title="${App.utils.escHtml(r.question)}">${App.utils.escHtml(r.question)}${r.parseWarning ? ' <span class="text-red-500 text-[10px]" title="' + App.utils.escHtml(r.parseWarning) + '">⚠</span>' : ''}</td>
+            <td class="px-4 py-2.5 text-center">${r.hit ? '<span class="text-green-600 font-medium">✓</span>' : '<span class="text-red-400">✗</span>'}</td>
+            <td class="px-4 py-2.5 text-center text-gray-600">${r.firstHitRank || '—'}</td>
+            <td class="px-4 py-2.5 text-center text-gray-500">${r.latencyMs || '—'}ms</td>
+            <td class="px-4 py-2.5 text-gray-500 max-w-[200px] truncate" title="${expected.map(f => App.utils.escHtml(f)).join(', ')}">${expected.map(f => App.utils.escHtml(f.split('/').pop())).join(', ')}</td>
+          </tr>`;
+        }).join('')}</tbody></table>`;
+    },
   },
 
   // ==================== 设 置 ====================
