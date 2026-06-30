@@ -26,8 +26,7 @@ public class AgentTools {
             ".env", ".env.local", ".env.production",
             ".pem", ".key", ".p12", ".pfx", ".jks",
             ".keystore", ".truststore",
-            "credentials.json", "service-account.json",
-            ".git/config", ".git/credentials"
+            "credentials.json", "service-account.json"
     );
     private static final Set<String> BLOCKED_FILENAMES = Set.of(
             ".env", ".env.local", ".env.production", ".env.development",
