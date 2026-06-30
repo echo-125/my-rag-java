@@ -39,6 +39,8 @@ public class RagConfigService {
             "reranking_model",
             "reranking_top_n",
             "reranking_pool_size",
+            "enable_query_rewrite",
+            "enable_context_compression",
             // ── 噪声过滤 ──
             "enable_noise_filter",
             "noise_min_length",
@@ -75,6 +77,9 @@ public class RagConfigService {
                     new RagConfigEntity("reranking_model",  "bge-reranker-v2-m3", "Reranking 模型名称"),
                     new RagConfigEntity("reranking_top_n",  "3",    "Reranking 后保留的结果数"),
                     new RagConfigEntity("reranking_pool_size", "20", "Reranking 粗排候选池大小"),
+                    new RagConfigEntity("enable_query_rewrite", "false", "是否启用查询改写（LLM 优化检索 query）"),
+                    new RagConfigEntity("query_rewrite_prompt", "", "查询改写自定义 prompt（留空使用默认）"),
+                    new RagConfigEntity("enable_context_compression", "false", "是否启用上下文压缩（预留）"),
                     new RagConfigEntity("system_prompt",     "你是一个代码和文档助手。根据以下检索到的相关代码/文档片段回答用户问题。\n如果检索结果中没有相关信息，请如实说明。", "系统提示词")
             );
 

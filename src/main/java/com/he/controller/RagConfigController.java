@@ -34,6 +34,9 @@ public class RagConfigController {
             Map.entry("reranking_model",     "text"),
             Map.entry("reranking_top_n",     "number"),
             Map.entry("reranking_pool_size", "number"),
+            Map.entry("enable_query_rewrite", "boolean"),
+            Map.entry("query_rewrite_prompt", "textarea"),
+            Map.entry("enable_context_compression", "boolean"),
             Map.entry("system_prompt",       "textarea")
     );
 

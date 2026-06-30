@@ -44,6 +44,7 @@ public class RagChatService {
     private final JdbcTemplate jdbcTemplate;
     private final String pgTable;
     private final RerankingService rerankingService;
+    private final QueryRewriteService queryRewriteService;
 
     /** 缓存各模型的流式支持标记，避免每次聊天查 DB */
     private final Map<UUID, Boolean> streamingCache = new ConcurrentHashMap<>();
@@ -56,7 +57,8 @@ public class RagChatService {
                           ConversationService conversationService,
                           JdbcTemplate jdbcTemplate,
                           @Value("${pgvector.table}") String pgTable,
-                          RerankingService rerankingService) {
+                          RerankingService rerankingService,
+                          QueryRewriteService queryRewriteService) {
         this.embeddingStore = embeddingStore;
         this.embeddingModel = embeddingModel;
         this.modelRouter = modelRouter;
@@ -66,33 +68,69 @@ public class RagChatService {
         this.jdbcTemplate = jdbcTemplate;
         this.pgTable = pgTable;
         this.rerankingService = rerankingService;
+        this.queryRewriteService = queryRewriteService;
     }
 
     /**
      * 执行检索 + 可选 reranking，返回最终的 Content 列表。
-     * reranking 开启时，候选池扩大到 reranking_pool_size（默认 20），精排后截取 top_n。
+     * 流程：查询改写 → 检索 → 去重 → reranking。
      */
-    private List<Content> retrieveAndRerank(String query) {
-        boolean rerankingEnabled = ragConfigService.getBoolean("enable_reranking", false);
+    private List<Content> retrieveAndRerank(String query, List<Message> history) {
+        // 1. 查询改写（可选）
+        String searchQuery = query;
+        if (ragConfigService.getBoolean("enable_query_rewrite", false)) {
+            List<Message> recent = history.size() > 2
+                    ? history.subList(history.size() - 2, history.size()) : history;
+            String rewritten = queryRewriteService.rewrite(query, recent);
+            if (rewritten != null && !rewritten.isBlank()) {
+                searchQuery = rewritten;
+                log.debug("查询改写: '{}' → '{}'", query, searchQuery);
+            }
+        }
 
-        // reranking 开启时，候选池扩大（粗排多取，精排少留），确保候选池 ≥ 精排保留数
+        // 2. 检索
+        boolean rerankingEnabled = ragConfigService.getBoolean("enable_reranking", false);
         int maxResults = rerankingEnabled
                 ? Math.max(ragConfigService.getInt("reranking_pool_size", 20),
                            ragConfigService.getInt("reranking_top_n", 3))
                 : ragConfigService.getInt("max_results", 5);
 
-        List<Content> contents = buildRetrieverWithPool(maxResults).retrieve(Query.from(query));
+        List<Content> contents = buildRetrieverWithPool(maxResults).retrieve(Query.from(searchQuery));
 
+        // 3. 按 file_path 去重（同一文件保留第一个）
+        contents = deduplicateByFilePath(contents);
+
+        // 4. Reranking 精排（可选）
         if (rerankingEnabled && contents.size() > 1) {
             int topN = ragConfigService.getInt("reranking_top_n", 3);
             int beforeSize = contents.size();
-            contents = rerankingService.rerank(query, contents);
+            contents = rerankingService.rerank(searchQuery, contents);
             int actualTopN = Math.min(topN, contents.size());
             contents = contents.subList(0, actualTopN);
             log.debug("Reranking: 候选 {} → 精排后保留 {} 条", beforeSize, contents.size());
         }
 
         return contents;
+    }
+
+    /**
+     * 按 file_path 去重，同一文件保留第一个（最高分）。
+     */
+    private List<Content> deduplicateByFilePath(List<Content> contents) {
+        LinkedHashMap<String, Content> unique = new LinkedHashMap<>();
+        for (Content c : contents) {
+            String key = contentKey(c);
+            unique.putIfAbsent(key, c);
+        }
+        return new ArrayList<>(unique.values());
+    }
+
+    private static String contentKey(Content c) {
+        var meta = c.textSegment().metadata();
+        String path = meta.getString("file_path");
+        String type = meta.getString("type");
+        String sig = meta.getString("signature");
+        return (path != null ? path : "") + "|" + (type != null ? type : "") + "|" + (sig != null ? sig : "");
     }
 
     /**
@@ -139,8 +177,11 @@ public class RagChatService {
      * @param sessionId 会话 ID（用于多轮对话隔离）
      */
     public Flux<String> chat(String query, String modelKey, String sessionId) {
-        // 1. 检索 + 可选 reranking
-        List<Content> contents = retrieveAndRerank(query);
+        // 1. 获取历史（供改写 + prompt 构建，只查一次）
+        List<Message> history = conversationService.getHistory(sessionId);
+
+        // 2. 检索 + 可选改写 + 可选 reranking
+        List<Content> contents = retrieveAndRerank(query, history);
         String context = contents.stream()
                 .map(Content::textSegment)
                 .map(segment -> {
@@ -159,11 +200,9 @@ public class RagChatService {
                 + context + "\n"
                 + "=== 内容结束 ===";
 
-        // 3. 获取历史消息（用于构建 Prompt，但不修改历史）
-        List<Message> history = conversationService.getHistory(sessionId);
         log.debug("会话 {}: 历史消息 {} 条", sessionId, history.size());
 
-        // 4. 验证模型配置
+        // 3. 验证模型配置
         if (modelKey == null || modelKey.isBlank()) {
             throw new IllegalArgumentException("请选择一个 LLM 模型");
         }
@@ -253,8 +292,11 @@ public class RagChatService {
      * </ul>
      */
     public Flux<String> chatWithCitations(String query, String modelKey, String sessionId) {
-        // 1. 检索 + 可选 reranking
-        List<Content> contents = retrieveAndRerank(query);
+        // 1. 获取历史（供改写 + prompt 构建）
+        List<Message> history = conversationService.getHistory(sessionId);
+
+        // 2. 检索 + 可选改写 + 可选 reranking
+        List<Content> contents = retrieveAndRerank(query, history);
 
         // 2. 构建引用列表（按 file_path 去重，保持顺序）
         List<Citation> citations = buildCitations(contents);
@@ -275,10 +317,7 @@ public class RagChatService {
                 + context + "\n"
                 + "=== 内容结束 ===";
 
-        // 4. 获取历史消息
-        List<Message> history = conversationService.getHistory(sessionId);
-
-        // 5. 验证模型配置
+        // 4. 验证模型配置
         if (modelKey == null || modelKey.isBlank()) {
             throw new IllegalArgumentException("请选择一个 LLM 模型");
         }
