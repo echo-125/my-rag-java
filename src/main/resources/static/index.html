@@ -156,13 +156,26 @@
               </div>
             </div>
           </div>
-          <!-- 右侧：问答记录 -->
-          <div class="col-span-1 bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col h-full overflow-hidden">
-            <div class="p-4 border-b border-gray-50 bg-gray-50/50">
-              <h2 class="text-sm font-semibold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-primary rounded-full"></div>最近问答记录</h2>
+          <!-- 右侧：问答记录 + 评估反馈 -->
+          <div class="col-span-1 flex flex-col gap-4 h-full overflow-hidden">
+            <!-- 问答记录 -->
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col flex-1 overflow-hidden">
+              <div class="p-4 border-b border-gray-50 bg-gray-50/50">
+                <h2 class="text-sm font-semibold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-primary rounded-full"></div>最近问答记录</h2>
+              </div>
+              <div id="recentQA" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                <div class="text-sm text-gray-400 text-center py-8">加载中...</div>
+              </div>
             </div>
-            <div id="recentQA" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-              <div class="text-sm text-gray-400 text-center py-8">加载中...</div>
+            <!-- 评估报告 -->
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+              <h2 class="text-sm font-semibold text-gray-800 flex items-center gap-2 mb-3"><div class="w-1.5 h-4 bg-blue-500 rounded-full"></div>评估报告</h2>
+              <div id="evalReport"><div class="text-sm text-gray-400 text-center py-4">加载中...</div></div>
+            </div>
+            <!-- 反馈统计 -->
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+              <h2 class="text-sm font-semibold text-gray-800 flex items-center gap-2 mb-3"><div class="w-1.5 h-4 bg-green-500 rounded-full"></div>用户反馈</h2>
+              <div id="feedbackStats"><div class="text-sm text-gray-400 text-center py-4">加载中...</div></div>
             </div>
           </div>
         </div>

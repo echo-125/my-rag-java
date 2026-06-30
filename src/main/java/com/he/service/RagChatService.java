@@ -76,6 +76,7 @@ public class RagChatService {
      * 流程：查询改写 → 检索 → 去重 → reranking。
      */
     private List<Content> retrieveAndRerank(String query, List<Message> history) {
+        long retrieveStart = System.nanoTime();
         // 1. 查询改写（可选）
         String searchQuery = query;
         if (ragConfigService.getBoolean("enable_query_rewrite", false)) {
@@ -110,6 +111,8 @@ public class RagChatService {
             log.debug("Reranking: 候选 {} → 精排后保留 {} 条", beforeSize, contents.size());
         }
 
+        long retrieveMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - retrieveStart);
+        log.debug("检索管线总耗时: {}ms (query='{}')", retrieveMs, query);
         return contents;
     }
 
@@ -155,6 +158,14 @@ public class RagChatService {
                 new PgVectorKeywordContentRetriever(jdbcTemplate, pgTable, poolSize);
 
         return new HybridContentRetriever(vectorRetriever, keywordRetriever, poolSize);
+    }
+
+    /**
+     * 仅执行检索（无 LLM 生成），供评估服务调用。
+     */
+    public List<Content> retrieve(String query) {
+        List<Message> history = List.of();
+        return retrieveAndRerank(query, history);
     }
 
     /** 清除流式支持缓存（测试连接后调用） */

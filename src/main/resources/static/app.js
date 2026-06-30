@@ -293,6 +293,19 @@ const App = {
         responseDiv.innerHTML = `<p class="text-red-500 text-sm">✕ ${App.utils.escHtml(e.message)}</p>`;
       } finally {
         document.getElementById('sendBtn').disabled = false;
+        // 追加 👍👎 反馈按钮（存 data 属性避免 XSS）
+        if (fullText && !responseDiv.querySelector('.feedback-bar')) {
+          const bar = document.createElement('div');
+          bar.className = 'feedback-bar flex items-center gap-2 mt-3 pt-3 border-t border-gray-100';
+          bar.dataset.query = query;
+          bar.dataset.answer = fullText.substring(0, 500);
+          bar.innerHTML = `
+            <span class="text-xs text-gray-400">这个回答有帮助吗？</span>
+            <button onclick="App.chat.feedback(this, 1)" class="px-2 py-1 text-xs rounded hover:bg-green-50 text-gray-400 hover:text-green-600 transition-colors border border-transparent hover:border-green-200">👍</button>
+            <button onclick="App.chat.feedback(this, -1)" class="px-2 py-1 text-xs rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors border border-transparent hover:border-red-200">👎</button>
+          `;
+          responseDiv.appendChild(bar);
+        }
         messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
         this.loadSessions();
       }
@@ -303,11 +316,14 @@ const App = {
       App.state.renderScheduled = true;
       requestAnimationFrame(() => {
         if (responseDiv) {
+          // 保留反馈按钮（Markdown 渲染会清空 innerHTML）
+          const existingBar = responseDiv.querySelector('.feedback-bar');
           responseDiv.innerHTML = marked.parse(App.state.pendingText);
           App.chat.renderMermaid(responseDiv);
           responseDiv.querySelectorAll('pre code').forEach((block) => {
             if (!block.classList.contains('language-mermaid') && window.hljs) hljs.highlightElement(block);
           });
+          if (existingBar) responseDiv.appendChild(existingBar);
         }
         App.state.renderScheduled = false;
       });
@@ -336,6 +352,28 @@ const App = {
         </div>
       `).join('');
     },
+    async feedback(btn, rating) {
+      const bar = btn.closest('.feedback-bar');
+      if (bar.querySelector('.fb-done')) return;
+      const question = bar.dataset.query || '';
+      const answer = bar.dataset.answer || '';
+      try {
+        const saveResp = await fetch('/api/chat/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, answer, modelName: document.getElementById('modelSelect')?.selectedOptions[0]?.text || '' })
+        });
+        const saveData = await saveResp.json();
+        await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ qaHistoryId: saveData.id, rating })
+        });
+        bar.innerHTML = '<span class="fb-done text-xs text-gray-400">' + (rating > 0 ? '感谢反馈 👍' : '感谢反馈 👎') + '</span>';
+      } catch (e) {
+        App.utils.toast('反馈提交失败', 'error');
+      }
+    },
     clear() {
       App.state.currentSessionId = null;
       document.getElementById('chatContainer').innerHTML = `<div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in"><div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10"><svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div><h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2><p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p></div>`;
@@ -350,7 +388,7 @@ const App = {
       if (!App.state.mermaidInitialized) {
         try { if (window.mermaid) mermaid.run({ nodes: document.querySelectorAll('.mermaid:not([data-processed])') }); App.state.mermaidInitialized = true; } catch (e) {}
       }
-      this.initECharts(); this.loadStats(); this.loadRecentQA();
+      this.initECharts(); this.loadStats(); this.loadRecentQA(); this.loadEvalReport(); this.loadFeedbackStats();
     },
     async loadStats() {
       try {
@@ -387,6 +425,51 @@ const App = {
             `<div class="p-3 bg-gray-50 rounded-lg border border-gray-100 animate-fade-in"><div class="text-sm font-medium text-gray-800 truncate">${App.utils.escHtml(qa.question)}</div><div class="text-xs text-gray-500 mt-1 line-clamp-2">${App.utils.escHtml(qa.answer.substring(0, 120))}${(qa.answer.length > 120 ? '...' : '')}</div><div class="text-xs text-gray-400 mt-1.5">${qa.time}</div></div>`
           ).join('');
         }
+      }
+    },
+
+    async loadEvalReport() {
+      const container = document.getElementById('evalReport');
+      if (!container) return;
+      try {
+        const resp = await App.utils.fetchWithRetry('/api/evaluation/report');
+        const data = await resp.json();
+        if (!data.found) {
+          container.innerHTML = '<div class="text-sm text-gray-400 text-center py-6">暂无评估报告<br><span class="text-xs">可通过 POST /api/evaluation/run 执行评估</span></div>';
+          return;
+        }
+        container.innerHTML = `
+          <div class="grid grid-cols-2 gap-3 mb-3">
+            <div class="text-center p-2 bg-blue-50 rounded-lg"><div class="text-lg font-bold text-blue-700">${(data.precisionAtK * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">Precision@K</div></div>
+            <div class="text-center p-2 bg-green-50 rounded-lg"><div class="text-lg font-bold text-green-700">${(data.hitRate * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">Hit Rate</div></div>
+            <div class="text-center p-2 bg-purple-50 rounded-lg"><div class="text-lg font-bold text-purple-700">${data.mrr ? data.mrr.toFixed(3) : '—'}</div><div class="text-xs text-gray-500">MRR</div></div>
+            <div class="text-center p-2 bg-amber-50 rounded-lg"><div class="text-lg font-bold text-amber-700">${data.avgLatencyMs || '—'}ms</div><div class="text-xs text-gray-500">平均延迟</div></div>
+          </div>
+          <div class="text-xs text-gray-400 text-center">${data.completedCases}/${data.totalCases} 题 · ${data.evaluatedAt ? new Date(data.evaluatedAt).toLocaleString() : ''}</div>`;
+      } catch (e) {
+        container.innerHTML = '<div class="text-sm text-gray-400 text-center py-6">暂无评估报告</div>';
+      }
+    },
+
+    async loadFeedbackStats() {
+      const container = document.getElementById('feedbackStats');
+      if (!container) return;
+      try {
+        const resp = await App.utils.fetchWithRetry('/api/feedback/stats');
+        const stats = await resp.json();
+        if (stats.total === 0) {
+          container.innerHTML = '<div class="text-sm text-gray-400 text-center py-4">暂无反馈</div>';
+          return;
+        }
+        container.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="text-center"><div class="text-xl font-bold text-green-600">${stats.positive}</div><div class="text-xs text-gray-500">👍</div></div>
+            <div class="text-center"><div class="text-2xl font-bold text-primary">${stats.positiveRate}%</div><div class="text-xs text-gray-500">满意率</div></div>
+            <div class="text-center"><div class="text-xl font-bold text-red-500">${stats.negative}</div><div class="text-xs text-gray-500">👎</div></div>
+          </div>
+          <div class="text-xs text-gray-400 text-center mt-2">共 ${stats.total} 条反馈</div>`;
+      } catch (e) {
+        container.innerHTML = '<div class="text-sm text-gray-400 text-center py-4">暂无反馈</div>';
       }
     },
 

@@ -85,12 +85,13 @@ public class RagChatController {
      * POST /api/chat/save — 保存问答记录（由前端在流结束后调用）。
      */
     @PostMapping("/save")
-    public void saveQa(@RequestBody QaSaveRequest request) {
+    public java.util.Map<String, String> saveQa(@RequestBody QaSaveRequest request) {
         QaHistoryEntity entity = new QaHistoryEntity();
         entity.setQuestion(request.question());
         entity.setAnswer(request.answer());
         entity.setModelName(request.modelName());
         qaHistoryRepo.save(entity);
+        return java.util.Map.of("id", entity.getId().toString());
     }
 
     /**

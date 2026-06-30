@@ -1,0 +1,27 @@
+[
+  {
+    "question": "惠普复印留底的操作步骤是什么",
+    "expected_files": ["HPMFP_AutoCopyArchive功能配置说明.docx"],
+    "tags": ["操作手册", "惠普"]
+  },
+  {
+    "question": "PrintHub系统有哪些核心模块",
+    "expected_files": ["印核文印管理系统-管理员手册V5.5 20190531.pdf"],
+    "tags": ["系统架构", "PrintHub"]
+  },
+  {
+    "question": "柯尼卡美能达复合机的扫描留底怎么配置",
+    "expected_files": ["复印扫描留底FTP柯尼卡美能达复合机-扫描复印留底配置指南 20190531.pdf"],
+    "tags": ["操作手册", "柯尼卡美能达"]
+  },
+  {
+    "question": "夏普SDK的实施流程是什么",
+    "expected_files": ["夏普SDK实施手册V1.0.url"],
+    "tags": ["操作手册", "夏普"]
+  },
+  {
+    "question": "惠普复合机的管控指南包含哪些内容",
+    "expected_files": ["惠普复合机-管控指南 20190531.pdf"],
+    "tags": ["管控", "惠普"]
+  }
+]
