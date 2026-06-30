@@ -34,7 +34,6 @@ public class RagConfigController {
             Map.entry("reranking_model",     "text"),
             Map.entry("reranking_top_n",     "number"),
             Map.entry("reranking_pool_size", "number"),
-            Map.entry("ollama_url",          "text"),
             Map.entry("system_prompt",       "textarea")
     );
 

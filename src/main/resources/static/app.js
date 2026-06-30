@@ -910,17 +910,33 @@ const App = {
         const form = document.getElementById('ragConfig');
         if (!form) return;
         try {
-          const resp = await fetch('/api/configs');
+          const [resp, rerankResp] = await Promise.all([
+            fetch('/api/configs'),
+            fetch('/api/reranking-configs').catch(() => ({ ok: false, json: () => [] }))
+          ]);
           if (!resp.ok) { form.innerHTML = '<div class="text-red-500 text-sm p-4">加载失败</div>'; return; }
           const configs = await resp.json();
+          const rerankConfigs = rerankResp.ok ? await rerankResp.json() : [];
+          const hasRerankModels = rerankConfigs.length > 0;
+
           if (configs.length === 0) { form.innerHTML = '<div class="text-gray-400 text-sm p-4">暂无配置项</div>'; return; }
           form.innerHTML = configs.map(c => {
             const id = 'rag_' + c.key;
+            const isRerankItem = ['reranking_model', 'reranking_top_n', 'reranking_pool_size'].includes(c.key);
+            const disableRerank = isRerankItem && !hasRerankModels;
             let input;
-            if (c.type === 'boolean') {
-              input = '<select id="' + id + '" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none w-36 bg-white"><option value="true"' + (c.value === 'true' ? ' selected' : '') + '>开启</option><option value="false"' + (c.value === 'false' ? ' selected' : '') + '>关闭</option></select>';
+
+            if (c.key === 'reranking_model') {
+              // 下拉框：选项来自 Reranking 接入的模型
+              const options = rerankConfigs.map(rc =>
+                '<option value="' + App.utils.escHtml(rc.modelName) + '"' + (c.value === rc.modelName ? ' selected' : '') + '>' + App.utils.escHtml(rc.name) + ' (' + App.utils.escHtml(rc.modelName) + ')</option>'
+              ).join('');
+              input = '<select id="' + id + '" ' + (disableRerank ? 'disabled' : '') + ' class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none w-44 bg-white' + (disableRerank ? ' bg-gray-100 text-gray-400' : '') + '"><option value="">-- 请选择 --</option>' + options + '</select>';
+            } else if (c.type === 'boolean') {
+              const disabled = c.key === 'enable_reranking' && !hasRerankModels;
+              input = '<select id="' + id + '" ' + (disabled ? 'disabled' : '') + ' class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none w-36 bg-white' + (disabled ? ' bg-gray-100 text-gray-400' : '') + '"><option value="true"' + (c.value === 'true' ? ' selected' : '') + '>开启</option><option value="false"' + (c.value === 'false' ? ' selected' : '') + '>关闭</option></select>';
             } else if (c.type === 'number') {
-              input = '<input id="' + id + '" type="number" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none w-44 bg-white" value="' + App.utils.escHtml(c.value) + '" step="' + (c.value.includes('.') ? '0.01' : '1') + '" min="0.01">';
+              input = '<input id="' + id + '" type="number" ' + (disableRerank ? 'disabled' : '') + ' class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none w-44 bg-white' + (disableRerank ? ' bg-gray-100 text-gray-400' : '') + '" value="' + App.utils.escHtml(c.value) + '" step="' + (c.value.includes('.') ? '0.01' : '1') + '" min="0.01">';
             } else if (c.type === 'textarea') {
               input = '<textarea id="' + id + '" rows="5" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none bg-white font-mono">' + App.utils.escHtml(c.value) + '</textarea>';
             } else {
@@ -1227,14 +1243,19 @@ const App = {
             tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-gray-400 text-sm">暂无配置，点击"新增模型"创建</td></tr>';
             hint.classList.remove('hidden');
             App.settings.rerank.syncEnableReranking(false);
+            App.settings.rerank.toggleRagRerankItems(false);
             return;
           }
 
-          tbody.innerHTML = configs.map(c =>
-            `<tr class="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
+          tbody.innerHTML = configs.map(c => {
+            const providerLabel = c.provider === 'api' ? 'API' : 'Ollama';
+            const providerBadge = c.provider === 'api'
+              ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-600 border border-blue-200">API</span>'
+              : '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-50 text-green-600 border border-green-200">Ollama</span>';
+            return `<tr class="border-b border-gray-100 hover:bg-gray-50/50 transition-colors">
               <td class="px-4 py-3 font-medium text-gray-800 text-sm">${App.utils.escHtml(c.name)}</td>
+              <td class="px-4 py-3">${providerBadge}</td>
               <td class="px-4 py-3 text-sm text-gray-600">${App.utils.escHtml(c.modelName || '—')}</td>
-              <td class="px-4 py-3 text-sm text-gray-500 font-mono">${App.utils.escHtml(c.ollamaUrl || '—')}</td>
               <td class="px-4 py-3">${c.isActive ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">● 已激活</span>' : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">○ 未激活</span>'}</td>
               <td class="px-4 py-2.5 text-right"><div class="flex gap-1.5 justify-end flex-wrap">
                 <button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 hover:border-gray-300 transition-colors" onclick="App.settings.rerank.test('${c.id}', this)">测试</button>
@@ -1243,18 +1264,57 @@ const App = {
                   : `<button class="px-2 py-1 text-xs border border-primary text-primary rounded hover:bg-green-50 transition-colors" onclick="App.settings.rerank.activate('${c.id}')">激活</button>`}
                 <button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 transition-colors" onclick="App.settings.rerank.edit('${c.id}')">编辑</button>
                 <button class="px-2 py-1 text-xs border border-red-200 text-red-600 rounded hover:bg-red-50 transition-colors" onclick="App.settings.rerank.delete('${c.id}','${App.utils.escHtml(c.name)}')">删除</button>
-              </div></td></tr>`
-          ).join('');
+              </div></td></tr>`;
+          }).join('');
 
           hint.classList.toggle('hidden', hasActive);
           App.settings.rerank.syncEnableReranking(hasActive);
+          App.settings.rerank.toggleRagRerankItems(hasActive);
         } catch (e) { console.error('加载 Reranking 配置失败:', e); }
       },
 
       syncEnableReranking(hasActive) {
-        const el = document.getElementById('rag_enable_reranking');
-        if (el && !hasActive) {
-          el.value = 'false';
+        const keys = ['enable_reranking', 'reranking_model', 'reranking_top_n', 'reranking_pool_size'];
+        keys.forEach(key => {
+          const el = document.getElementById('rag_' + key);
+          if (!el) return;
+          if (!hasActive) {
+            if (key === 'enable_reranking' || key === 'reranking_model') el.value = key === 'enable_reranking' ? 'false' : '';
+            el.disabled = true;
+            el.classList.add('bg-gray-100', 'text-gray-400');
+          } else {
+            el.disabled = false;
+            el.classList.remove('bg-gray-100', 'text-gray-400');
+          }
+        });
+        if (hasActive) {
+          fetch('/api/reranking-configs').then(r => r.json()).then(configs => {
+            const active = configs.find(c => c.isActive);
+            const modelEl = document.getElementById('rag_reranking_model');
+            if (active && modelEl) modelEl.value = active.modelName;
+          }).catch(() => {});
+        }
+      },
+
+      toggleRagRerankItems(hasActive) {
+        // 已由 syncEnableReranking 统一处理 disable/enable，此方法保留空实现
+      },
+
+      onProviderChange() {
+        const provider = document.getElementById('rerankProvider').value;
+        const keyRow = document.getElementById('rerankKeyRow');
+        const urlLabel = document.getElementById('rerankUrlLabel');
+        const urlInput = document.getElementById('rerankUrl');
+        if (provider === 'api') {
+          keyRow.classList.remove('hidden');
+          urlLabel.textContent = 'API Endpoint';
+          urlInput.placeholder = 'https://api.jina.ai/v1/rerank';
+          urlInput.value = '';
+        } else {
+          keyRow.classList.add('hidden');
+          urlLabel.textContent = 'Ollama 地址';
+          urlInput.placeholder = 'http://localhost:11434';
+          urlInput.value = 'http://localhost:11434';
         }
       },
 
@@ -1265,8 +1325,15 @@ const App = {
         document.getElementById('rerankModalTitle').textContent = config ? '编辑 Reranking 模型' : '添加 Reranking 模型';
         document.getElementById('rerankId').value = config ? config.id : '';
         document.getElementById('rerankName').value = config ? config.name : '';
+        document.getElementById('rerankProvider').value = config ? (config.provider || 'ollama') : 'ollama';
         document.getElementById('rerankModel').value = config ? config.modelName : '';
-        document.getElementById('rerankUrl').value = config ? (config.ollamaUrl || 'http://localhost:11434') : 'http://localhost:11434';
+        document.getElementById('rerankUrl').value = config ? (config.baseUrl || 'http://localhost:11434') : 'http://localhost:11434';
+        document.getElementById('rerankKey').value = '';
+        document.getElementById('rerankKey').placeholder = config ? '留空则不修改' : 'sk-...';
+        App.settings.rerank.onProviderChange();
+        if (config && config.provider === 'api') {
+          document.getElementById('rerankUrl').value = config.baseUrl || '';
+        }
       },
 
       closeModal() {
@@ -1279,8 +1346,10 @@ const App = {
         const id = document.getElementById('rerankId').value;
         const body = {
           name: document.getElementById('rerankName').value.trim(),
+          provider: document.getElementById('rerankProvider').value,
           modelName: document.getElementById('rerankModel').value.trim(),
-          ollamaUrl: document.getElementById('rerankUrl').value.trim(),
+          baseUrl: document.getElementById('rerankUrl').value.trim(),
+          apiKey: document.getElementById('rerankKey').value,
           isActive: false,
         };
         if (!body.name || !body.modelName) { App.utils.toast('请填写必填字段', 'warning'); return; }
