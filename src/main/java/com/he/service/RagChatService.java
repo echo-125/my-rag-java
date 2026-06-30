@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -45,6 +46,7 @@ public class RagChatService {
     private final String pgTable;
     private final RerankingService rerankingService;
     private final QueryRewriteService queryRewriteService;
+    private final ObjectProvider<AgentTools> agentToolsProvider;
 
     /** 缓存各模型的流式支持标记，避免每次聊天查 DB */
     private final Map<UUID, Boolean> streamingCache = new ConcurrentHashMap<>();
@@ -58,7 +60,8 @@ public class RagChatService {
                           JdbcTemplate jdbcTemplate,
                           @Value("${pgvector.table}") String pgTable,
                           RerankingService rerankingService,
-                          QueryRewriteService queryRewriteService) {
+                          QueryRewriteService queryRewriteService,
+                          ObjectProvider<AgentTools> agentToolsProvider) {
         this.embeddingStore = embeddingStore;
         this.embeddingModel = embeddingModel;
         this.modelRouter = modelRouter;
@@ -69,6 +72,7 @@ public class RagChatService {
         this.pgTable = pgTable;
         this.rerankingService = rerankingService;
         this.queryRewriteService = queryRewriteService;
+        this.agentToolsProvider = agentToolsProvider;
     }
 
     /**
@@ -239,7 +243,8 @@ public class RagChatService {
             StringBuilder fullResponse = new StringBuilder();
 
             var spec = chatClient.prompt()
-                    .system(systemPrompt);
+                    .system(systemPrompt)
+                    .tools(agentToolsProvider.getObject());
             if (!history.isEmpty()) {
                 spec.messages(history);
             }
@@ -261,7 +266,8 @@ public class RagChatService {
             log.debug("使用非流式对话, 会话: {}", sessionId);
 
             var spec = chatClient.prompt()
-                    .system(systemPrompt);
+                    .system(systemPrompt)
+                    .tools(agentToolsProvider.getObject());
             if (!history.isEmpty()) {
                 spec.messages(history);
             }
@@ -278,7 +284,8 @@ public class RagChatService {
                 conversationService.addAssistantMessage(sessionId, result);
                 log.debug("会话 {}: 非流式完成，保存回复完成", sessionId);
 
-                return Flux.just(result);
+                String toolMeta = buildToolMetadataJson();
+                return Flux.just("{\"text\":" + jsonEscape(result) + toolMeta + "}");
             });
         }
     }
@@ -355,7 +362,8 @@ public class RagChatService {
             StringBuilder fullResponse = new StringBuilder();
 
             var spec = chatClient.prompt()
-                    .system(systemPrompt);
+                    .system(systemPrompt)
+                    .tools(agentToolsProvider.getObject());
             if (!history.isEmpty()) {
                 spec.messages(history);
             }
@@ -382,12 +390,18 @@ public class RagChatService {
                     })
                     .doOnError(e -> {
                         log.error("会话 {}: 流式生成异常", sessionId, e);
-                    });
+                    })
+                    .concatWith(Flux.defer(() -> {
+                        String toolMeta = buildToolMetadataJson();
+                        if (toolMeta.isEmpty()) return Flux.empty();
+                        return Flux.just("{\"text\":\"\",\"toolMetadata\":" + toolMeta.substring(1) + "}");
+                    }));
         } else {
             log.debug("使用非流式对话（带引用）, 会话: {}", sessionId);
 
             var spec = chatClient.prompt()
-                    .system(systemPrompt);
+                    .system(systemPrompt)
+                    .tools(agentToolsProvider.getObject());
             if (!history.isEmpty()) {
                 spec.messages(history);
             }
@@ -403,8 +417,9 @@ public class RagChatService {
                 conversationService.addAssistantMessage(sessionId, result);
                 log.debug("会话 {}: 非流式完成（带引用），保存回复完成", sessionId);
 
-                // 非流式：一次性返回完整结果 + 引用
-                return Flux.just("{\"text\":" + jsonEscape(result) + ",\"sources\":" + sourcesJson + "}");
+                // 非流式：一次性返回完整结果 + 引用 + 工具调用元数据
+                String toolMeta = buildToolMetadataJson();
+                return Flux.just("{\"text\":" + jsonEscape(result) + ",\"sources\":" + sourcesJson + toolMeta + "}");
             });
         }
     }
@@ -470,6 +485,24 @@ public class RagChatService {
                        .replace("\n", "\\n")
                        .replace("\r", "\\r")
                        .replace("\t", "\\t") + "\"";
+    }
+
+    /**
+     * 构建工具调用元数据 JSON（追加到 sources 后面）。
+     */
+    private String buildToolMetadataJson() {
+        List<AgentToolMetadata.ToolCallRecord> calls = AgentToolMetadata.collectAndClear();
+        if (calls.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder(",\"toolMetadata\":[");
+        for (int i = 0; i < calls.size(); i++) {
+            AgentToolMetadata.ToolCallRecord c = calls.get(i);
+            if (i > 0) sb.append(",");
+            sb.append("{\"tool\":").append(jsonEscape(c.toolName()))
+              .append(",\"args\":").append(jsonEscape(c.args()))
+              .append(",\"duration\":").append(c.durationMs()).append("}");
+        }
+        sb.append("]");
+        return sb.toString();
     }
 
     // ═══════════════════════════════════════════════════

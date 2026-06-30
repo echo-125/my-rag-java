@@ -280,6 +280,9 @@ const App = {
                    App.state.currentSources = payload.sources;
                    App.chat.renderCitations(citationsDiv, App.state.currentSources);
                 }
+                if(payload.toolMetadata && payload.toolMetadata.length > 0) {
+                   App.chat.renderToolIndicator(responseDiv, payload.toolMetadata);
+                }
                 App.chat.scheduleRender(responseDiv, fullText);
               } catch (e) {
                 // 回退为纯文本流式
@@ -317,7 +320,7 @@ const App = {
       App.state.renderScheduled = true;
       requestAnimationFrame(() => {
         if (responseDiv) {
-          // 保留反馈按钮（Markdown 渲染会清空 innerHTML）
+          // 保留反馈按钮和工具指示器（Markdown 渲染会清空 innerHTML）
           const existingBar = responseDiv.querySelector('.feedback-bar');
           responseDiv.innerHTML = marked.parse(App.state.pendingText);
           App.chat.renderMermaid(responseDiv);
@@ -345,13 +348,41 @@ const App = {
     renderCitations(container, sources) {
       if(!sources || sources.length === 0) return;
       container.classList.remove('hidden');
-      container.innerHTML = `<div class="w-full text-xs font-medium text-gray-400 mb-1 flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> 引用来源</div>` + 
+      container.innerHTML = `<div class="w-full text-xs font-medium text-gray-400 mb-1 flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> 引用来源</div>` +
       sources.map((s, i) => `
         <div class="citation-pill" title="${App.utils.escHtml(s.path || s.name)}">
-          <span class="font-semibold text-[10px] bg-gray-200/50 px-1.5 rounded text-gray-500">[${i+1}]</span> 
+          <span class="font-semibold text-[10px] bg-gray-200/50 px-1.5 rounded text-gray-500">[${i+1}]</span>
           <span>${App.utils.escHtml(s.name)}</span>
         </div>
       `).join('');
+    },
+    renderToolIndicator(responseDiv, toolMetadata) {
+      const toolIcons = {
+        searchKnowledge: '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>',
+        readFile: '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>',
+        listDirectory: '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>',
+        getKnowledgeBaseStats: '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>'
+      };
+      const toolNames = {
+        searchKnowledge: '搜索知识库',
+        readFile: '读取文件',
+        listDirectory: '浏览目录',
+        getKnowledgeBaseStats: '获取统计'
+      };
+      let html = '<div class="flex items-center gap-1.5 flex-wrap" style="margin-bottom:6px">';
+      for (const t of toolMetadata) {
+        const icon = toolIcons[t.tool] || '';
+        const name = toolNames[t.tool] || t.tool;
+        html += `<span class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full border border-blue-100">${icon} ${name} <span class="text-blue-400">${t.duration}ms</span></span>`;
+      }
+      html += '</div>';
+      // 移除旧的指示器，避免重复叠加
+      const existing = responseDiv.parentNode.querySelector('.tool-indicator');
+      if (existing) existing.remove();
+      const indicator = document.createElement('div');
+      indicator.className = 'tool-indicator';
+      indicator.innerHTML = html;
+      responseDiv.parentNode.insertBefore(indicator, responseDiv);
     },
     async feedback(btn, rating) {
       const bar = btn.closest('.feedback-bar');
