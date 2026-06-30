@@ -31,6 +31,11 @@ logs/
 
 ### Playwright ###
 .playwright-mcp/
+test-results/
+
+### Node ###
+node_modules/
+package-lock.json
 
 ### Mimocode ###
 .mimocode/

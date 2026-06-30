@@ -162,6 +162,54 @@ mvn spring-boot:run
 4. 进入 **文档入库** → 添加项目路径 → 开始入库
 5. 进入 **对话** → 开始提问
 
+### 5. 启用 Reranking 精排（可选）
+
+Reranking 通过 Cross-Encoder 模型对检索结果进行二次精排，显著提升回答准确率。
+
+**部署方式**：使用 Ollama 编译的 llama-server 独立启动（官方暂未直接支持）。
+
+```powershell
+# 快速启动（Windows）
+cd tools
+start-qwen3-reranker.bat
+
+# 停止
+stop-qwen3-reranker.bat
+```
+
+**手动启动（参考）**：
+
+```powershell
+# 拉取模型
+ollama pull AuditAid/Qwen3_Reranker:0.6B_Q8
+
+# 启动 rerank 服务（固定端口 11435）
+$llamaServer = "C:\Program Files\Ollama\lib\ollama\llama-server.exe"
+$modelPath = "$env:USERPROFILE\.ollama\models\blobs\sha256-..."
+
+Start-Process $llamaServer --rerank --model $modelPath --port 11435 --host 127.0.0.1 --ctx-size 8192 --no-webui
+```
+
+**验证服务**：
+
+```bash
+curl -X POST http://localhost:11435/v1/rerank \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen3-reranker",
+    "query": "Apple",
+    "documents": ["apple", "banana", "fruit", "vegetable"]
+  }'
+```
+
+**系统集成**：在应用的 Reranking 配置页面添加配置并激活即可。
+
+详细文档参见 `tools/RERANK_INSTALL.md` 和 `tools/RERANK_START.md`。
+
+部署参考：[AuditAIH/audit-tool-skills/Rerank](https://github.com/AuditAIH/audit-tool-skills/tree/main/Rerank)
+
+---
+
 ## API 端点
 
 | 方法 | 路径 | 说明 |
@@ -174,6 +222,9 @@ mvn spring-boot:run
 | `GET/POST/PUT/DELETE` | `/api/llm-configs` | LLM 配置 CRUD |
 | `GET/POST/PUT/DELETE` | `/api/embedding-configs` | Embedding 配置 CRUD |
 | `GET/PUT` | `/api/configs` | RAG 参数配置 |
+| `GET/POST/PUT/DELETE` | `/api/reranking-configs` | Reranking 配置 CRUD |
+| `POST` | `/api/reranking-configs/{id}/test` | 测试 Reranking 连接 |
+| `POST` | `/api/reranking-configs/{id}/activate` | 激活 Reranking 配置 |
 | `GET` | `/api/dashboard/stats` | 仪表盘统计数据 |
 | `GET` | `/api/dashboard/language-stats` | 语言分布统计 |
 | `GET` | `/api/dashboard/recent-qa` | 最近问答记录 |
@@ -182,6 +233,11 @@ mvn spring-boot:run
 
 ```
 my-rag-java/
+├── tools/
+│   ├── RERANK_INSTALL.md            # Reranking 安装手册
+│   ├── RERANK_START.md              # Reranking 启动手册
+│   ├── start-qwen3-reranker.bat     # Windows 启动脚本
+│   └── stop-qwen3-reranker.bat      # Windows 停止脚本
 ├── src/main/java/com/he/
 │   ├── RagApplication.java              # 启动类
 │   ├── config/
@@ -192,15 +248,26 @@ my-rag-java/
 │   │   ├── LlmConfigController.java     # LLM 配置
 │   │   ├── EmbeddingConfigController.java
 │   │   ├── RagConfigController.java     # RAG 参数
+│   │   ├── RerankingConfigController.java # Reranking 配置
+│   │   ├── EvaluationController.java    # 离线评估
+│   │   ├── FeedbackController.java      # 在线反馈
+│   │   ├── ChatSessionController.java   # 会话管理
 │   │   ├── DashboardController.java     # 仪表盘
 │   │   └── ModelController.java         # 模型列表
 │   ├── service/                         # 业务逻辑
-│   │   ├── RagChatService.java          # RAG 问答核心
+│   │   ├── RagChatService.java          # RAG 问答核心（含 Agent 工具注册）
 │   │   ├── IngestionService.java        # 入库管道
 │   │   ├── ConversationService.java     # 对话历史管理
 │   │   ├── SpringAiModelRouterService.java  # 模型路由
 │   │   ├── RagConfigService.java        # 配置管理
-│   │   └── EmbeddingConfigService.java  # Embedding 配置
+│   │   ├── EmbeddingConfigService.java  # Embedding 配置
+│   │   ├── RerankingService.java        # Reranking 精排
+│   │   ├── RerankingConfigService.java  # Reranking 配置管理
+│   │   ├── EvaluationService.java       # 离线评估引擎
+│   │   ├── FeedbackService.java         # 在线反馈
+│   │   ├── QueryRewriteService.java     # 查询改写
+│   │   ├── AgentTools.java              # Agent 工具（4 个 @Tool）
+│   │   └── AgentToolMetadata.java       # 工具调用元数据
 │   ├── splitter/                        # 切分器（核心亮点）
 │   │   ├── FileSplitterRouter.java      # 切分器路由
 │   │   ├── JavaAstDocumentSplitter.java # Java AST 切分
@@ -217,12 +284,19 @@ my-rag-java/
 ├── src/main/resources/
 │   ├── application.yml                  # 配置文件
 │   ├── db/init.sql                      # 数据库初始化
+│   ├── eval/testset.json                # 评估种子测试集
 │   └── static/                          # 前端静态资源
 │       ├── index.html                   # 主页面
-│       ├── app.js                       # 前端逻辑
+│       ├── app.js                       # 前端逻辑（5 个 Tab）
 │       ├── app.css                      # 样式
 │       └── lib/                         # 第三方库（本地化）
-└── src/test/                            # 测试
+└── src/test/                            # 测试（77 个 MockMvc + 37 个 Playwright）
+    └── java/com/he/controller/         # Controller MockMvc 测试
+├── tests/                               # Playwright 测试
+│   ├── frontend.spec.ts                 # 前端 DOM/SSE 测试（27 个）
+│   ├── integration-api.spec.ts          # API 集成测试（10 个）
+│   ├── setup-test-data.js               # 测试数据准备脚本
+│   └── playwright.config.ts             # Playwright 配置
 ```
 
 ## 配置说明
@@ -254,6 +328,15 @@ mvn test -Dtest=类名#方法名
 
 # 构建（跳过测试）
 mvn clean package -DskipTests
+
+# Playwright 前端测试（需服务启动）
+npx playwright test tests/frontend.spec.ts
+
+# Playwright 集成测试（需服务启动 + 数据已入库）
+npx playwright test tests/integration-api.spec.ts
+
+# 准备测试数据
+node tests/setup-test-data.js
 ```
 
 ## 技术栈

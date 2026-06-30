@@ -33,6 +33,15 @@ mvn spring-boot:run
 
 # 运行全部测试
 mvn test
+
+# 运行单个测试类
+mvn test -Dtest=ChatSessionControllerTest
+
+# 运行 Playwright 前端测试（需服务启动）
+npx playwright test tests/frontend.spec.ts
+
+# 运行 Playwright 集成测试（需服务启动 + 测试数据已入库）
+npx playwright test tests/integration-api.spec.ts
 ```
 
 本地 Maven 仓库路径（settings.xml 中配置）：`D:\develop\MAVEN`
@@ -59,6 +68,17 @@ PostgreSQL：localhost，账号 `postgres/123456`
 - **指标**：Precision@K、Recall、MRR、Hit Rate（文件名归一化匹配）
 - **在线反馈**：`FeedbackService`，👍👎 按钮 + 满意率统计
 - **测试集**：DB 管理（`evaluation_testset`/`evaluation_testcase`），种子数据自动导入
+- **取消机制**：`EvaluationBatchEntity.cancelled` 字段，循环头每轮检查
+- **历史趋势**：`GET /api/evaluation/history`，前端 ECharts 折线图
+- **导入导出**：`GET /api/evaluation/testset/{id}/export`、`POST /api/evaluation/testset/import`
+
+### Agent 工具调用
+- **工具定义**：`AgentTools` 组件，4 个 `@Tool` 方法（searchKnowledge / readFile / listDirectory / getKnowledgeBaseStats）
+- **per-model 开关**：`LlmConfigEntity.enableToolCalling`，每个模型独立控制
+- **循环依赖**：`ObjectProvider<AgentTools>` 延迟注入打破 RagChatService ↔ AgentTools 环
+- **安全**：路径穿越防护 + 目录白名单 + 敏感文件拦截（`.env`/`.pem`/`.key` 等）
+- **元数据**：`AgentToolMetadata` ThreadLocal 收集，SSE 返回 `toolMetadata` 数组
+- **前端**：工具指示器（工具名 + 耗时）+ LLM 配置行 Agent 开关
 
 ### Reranking 管理
 - **实体**：`RerankingConfigEntity`（provider: ollama/api, modelName, baseUrl, apiKey, isActive）
@@ -76,12 +96,12 @@ PostgreSQL：localhost，账号 `postgres/123456`
 - **`reranking_config`**：id, name, provider, model_name, base_url, api_key, is_active
 - **`evaluation_testset`**：id, name, description, created_at, updated_at
 - **`evaluation_testcase`**：id, testset_id, question, expected_files, tags, created_at
-- **`evaluation_batch`**：id, testset_id, config_snapshot, status, metrics...
+- **`evaluation_batch`**：id, testset_id, config_snapshot, status, cancelled, total_cases, completed_cases, precision_at_k, recall_score, mrr, hit_rate, avg_latency_ms, evaluated_at, error_message
 - **`evaluation_result`**：id, batch_id, question, retrieved_files, expected_files, hit, parse_warning...
 - **`qa_feedback`**：id, qa_history_id, rating, comment, created_at
 
 ### 原有表
-- **`llm_config`** / **`embedding_config`** / **`project_config`** / **`qa_history`** / **`rag_config`**
+- **`llm_config`** / **`embedding_config`** / **`project_config`** / **`qa_history`** / **`rag_config`**（llm_config 含 `enable_tool_calling` 字段）
 
 ## 项目结构
 
@@ -108,7 +128,9 @@ src/main/java/com/he/
     QaFeedbackEntity                            用户反馈
     LlmConfigEntity / EmbeddingConfigEntity / ProjectConfigEntity / RagConfigEntity / QaHistoryEntity
   service/
-    RagChatService.java             检索管线（向量+BM25+去重+改写+reranking）+ 问答
+    RagChatService.java             检索管线（向量+BM25+去重+改写+reranking）+ 问答 + Agent 工具注册
+    AgentTools.java                 Agent 工具（searchKnowledge/readFile/listDirectory/getKnowledgeBaseStats）
+    AgentToolMetadata.java          工具调用元数据收集（ThreadLocal）
     IngestionService.java           入库（切分+向量化+search_vector 填充）
     ConversationService.java        对话历史（内存+DB 双写）
     EvaluationService.java          离线评估引擎（异步）
@@ -148,9 +170,13 @@ src/main/resources/
 | POST | `/api/reranking-configs/{id}/test` | 测试 Reranking 连接 |
 | POST | `/api/reranking-configs/{id}/activate` | 激活 Reranking 配置 |
 | POST | `/api/evaluation/run` | 启动评估任务 |
+| POST | `/api/evaluation/run/{batchId}/cancel` | 取消评估任务 |
 | GET | `/api/evaluation/run/{batchId}/status` | 评估进度 |
 | GET | `/api/evaluation/report` | 最新评估报告 |
+| GET | `/api/evaluation/history` | 评估历史趋势（最近 20 条） |
 | GET/POST/DELETE | `/api/evaluation/testset` | 测试集 CRUD |
+| GET | `/api/evaluation/testset/{id}/export` | 导出测试集（JSON 下载） |
+| POST | `/api/evaluation/testset/import` | 导入测试集 |
 | GET/POST/DELETE | `/api/evaluation/testset/{id}/cases` | 测试用例 CRUD |
 | POST | `/api/feedback` | 提交反馈 |
 | GET | `/api/feedback/stats` | 反馈统计 |
@@ -159,3 +185,60 @@ src/main/resources/
 | GET/POST/PUT/DELETE | `/api/embedding-configs` | Embedding 配置 |
 | GET/PUT | `/api/configs` | RAG 策略配置 |
 | GET | `/api/dashboard/*` | 仪表盘统计 |
+
+## 测试
+
+### 测试结构
+
+```
+src/test/java/com/he/
+  controller/                       MockMvc 单元测试（standalone 模式）
+    ChatSessionControllerTest.java  P0 对话历史（6 个测试）
+    EvaluationControllerTest.java   P4 评估体系（17 个测试）
+    FeedbackControllerTest.java     P5+ 在线反馈（7 个测试）
+    IngestionControllerTest.java    P1 入库/检索（4 个测试）
+    LlmConfigControllerTest.java    P5 Agent 工具调用（14 个测试）
+    RagChatControllerTest.java      P0 对话/SSE 流（4 个测试）
+    RagConfigControllerTest.java    RAG 配置（7 个测试）
+    RerankingConfigControllerTest.java  P2 Reranking 精排（12 个测试）
+  service/
+    AgentToolsTest.java             Agent 工具测试（需数据库）
+    LlmConfigServiceTest.java       LLM 配置服务测试
+  splitter/                         切分器测试
+
+tests/
+  frontend.spec.ts                  Playwright 前端测试（27 个）
+  integration-api.spec.ts           Playwright 集成测试（10 个）
+  setup-test-data.js                测试数据准备脚本
+  playwright.config.ts              Playwright 配置
+```
+
+### 测试运行
+
+```bash
+# Maven 单元测试（77 个，无需数据库）
+mvn test -Dtest="ChatSessionControllerTest,FeedbackControllerTest,EvaluationControllerTest,RerankingConfigControllerTest,RagConfigControllerTest,RagChatControllerTest,LlmConfigControllerTest,IngestionControllerTest,LlmConfigServiceTest"
+
+# Playwright 前端测试（27 个，需服务启动）
+npx playwright test tests/frontend.spec.ts
+
+# Playwright 集成测试（10 个，需服务启动 + 数据已入库）
+npx playwright test tests/integration-api.spec.ts
+
+# 准备测试数据
+node tests/setup-test-data.js
+```
+
+### 测试覆盖的 TEST_PLAN 模块
+
+| 模块 | MockMvc | Playwright | 说明 |
+|------|---------|------------|------|
+| P0 对话历史 | ✅ 6 | ✅ 3 | 会话 CRUD、消息持久化 |
+| P1 混合检索 | ✅ 4 | ✅ 1 | 入库/扫描、SSE 端点 |
+| P2 Reranking | ✅ 12 | - | 配置 CRUD、激活/停用、测试连接 |
+| P3 查询改写 | - | - | 依赖 LLM，已由 LlmConfigServiceTest 覆盖 |
+| P4 评估体系 | ✅ 17 | ✅ 5 | 测试集/用例 CRUD、运行/取消/报告 |
+| P5 Agent 工具 | ✅ 14 | ✅ 4 | LLM 配置、Agent 开关、工具指示器 |
+| P5+ 在线反馈 | ✅ 7 | ✅ 1 | 反馈提交、统计、低分列表 |
+| DOM 结构 | - | ✅ 8 | Tab 页、侧边栏、输入框、Toast |
+| SSE 格式 | - | ✅ 2 | event-stream 响应、JSON 格式 |

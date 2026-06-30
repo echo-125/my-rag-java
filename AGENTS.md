@@ -20,6 +20,15 @@ mvn clean package -DskipTests
 
 # 运行
 mvn spring-boot:run
+
+# Playwright 前端测试（需服务启动）
+npx playwright test tests/frontend.spec.ts
+
+# Playwright 集成测试（需服务启动 + 数据已入库）
+npx playwright test tests/integration-api.spec.ts
+
+# 准备测试数据
+node tests/setup-test-data.js
 ```
 
 **环境路径**（非标准）：本地 Maven 仓库 `D:\develop\MAVEN`（settings.xml 配置），JDK `C:\Program Files\Java\jdk-21`。
@@ -56,6 +65,22 @@ mvn spring-boot:run
 
 ### 评估体系
 `EvaluationService` 支持离线批量评估（异步 VirtualThread）和在线用户反馈（👍👎）。测试集存储在 `evaluation_testset/evaluation_testcase` 表，评估结果存储在 `evaluation_batch/evaluation_result` 表。种子测试集通过 `@EventListener(ApplicationReadyEvent.class)` 自动导入。评估指标：Precision@K、Recall、MRR、Hit Rate，文件名匹配归一化。
+
+### 评估增强
+- **取消机制**：`EvaluationBatchEntity.cancelled` 字段，`executeBatch` 循环头每轮检查，`POST /api/evaluation/run/{batchId}/cancel` 端点
+- **历史趋势**：`GET /api/evaluation/history` 返回最近 20 条 completed batch 摘要，前端 ECharts 折线图展示
+- **导入导出**：`GET /api/evaluation/testset/{id}/export`（JSON 下载）、`POST /api/evaluation/testset/import`（批量导入）
+
+### Agent 工具调用（Spring AI Tool-Calling）
+`AgentTools` 组件提供 4 个 `@Tool` 方法，通过 `ChatClient.prompt().tools()` 注册。per-model 开关 `LlmConfigEntity.enableToolCalling`，每个模型独立控制。`RagChatService` 中用 `ObjectProvider<AgentTools>` 延迟注入打破循环依赖。
+
+4 个工具：
+- `searchKnowledge(query)` — 复用 `retrieve()` 混合检索管线
+- `readFile(filePath)` — 路径穿越防护 + 白名单 + 敏感文件拦截（`.env`/`.pem`/`.key` 等）+ 8000 字符截断
+- `listDirectory(dirPath)` — depth=1 遍历，最多 50 条
+- `getKnowledgeBaseStats()` — 查询 `document_chunks` + `project_config` 统计
+
+工具调用元数据通过 `AgentToolMetadata` ThreadLocal 收集，SSE 最后一个事件追加 `toolMetadata` 数组，前端渲染工具指示器（工具名 + 耗时）。
 
 ### 对话历史持久化
 `ConversationService` 使用内存 + DB 双写策略。`chat_session` 表存储会话元数据，`chat_message` 表存储消息。启动时按需从 DB 加载到内存。前端 sidebar 显示历史会话列表，支持切换和删除。
