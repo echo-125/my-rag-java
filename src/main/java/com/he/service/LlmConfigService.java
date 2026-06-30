@@ -76,10 +76,12 @@ public class LlmConfigService {
         LlmConfigEntity existing = repository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("配置不存在: " + id));
 
-        existing.setName(updated.getName());
-        existing.setModelName(updated.getModelName());
-        existing.setBaseUrl(updated.getBaseUrl());
-        existing.setApiFormat(updated.getApiFormat());
+        if (updated.getName() != null) existing.setName(updated.getName());
+        if (updated.getModelName() != null) existing.setModelName(updated.getModelName());
+        if (updated.getBaseUrl() != null) existing.setBaseUrl(updated.getBaseUrl());
+        if (updated.getApiFormat() != null) existing.setApiFormat(updated.getApiFormat());
+        if (updated.getSupportsStreaming() != null) existing.setSupportsStreaming(updated.getSupportsStreaming());
+        if (updated.getEnableToolCalling() != null) existing.setEnableToolCalling(updated.getEnableToolCalling());
 
         // 只有传了新密钥才更新（排除前端回传的脱敏值）
         String newKey = updated.getApiKey();
@@ -201,6 +203,7 @@ public class LlmConfigService {
         copy.setApiFormat(source.getApiFormat());
         copy.setIsActive(source.getIsActive());
         copy.setSupportsStreaming(source.getSupportsStreaming());
+        copy.setEnableToolCalling(source.getEnableToolCalling());
         // 密钥仅脱敏展示
         String key = source.getApiKey();
         if (key != null && key.length() > 4) {

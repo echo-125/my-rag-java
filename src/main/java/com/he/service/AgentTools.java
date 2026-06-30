@@ -22,6 +22,19 @@ public class AgentTools {
     private static final Logger log = LoggerFactory.getLogger(AgentTools.class);
     private static final int MAX_FILE_CHARS = 8000;
     private static final int MAX_DIR_ENTRIES = 50;
+    private static final Set<String> BLOCKED_EXTENSIONS = Set.of(
+            ".env", ".env.local", ".env.production",
+            ".pem", ".key", ".p12", ".pfx", ".jks",
+            ".keystore", ".truststore",
+            "credentials.json", "service-account.json",
+            ".git/config", ".git/credentials"
+    );
+    private static final Set<String> BLOCKED_FILENAMES = Set.of(
+            ".env", ".env.local", ".env.production", ".env.development",
+            "id_rsa", "id_ed25519", "id_dsa", "id_ecdsa",
+            "credentials.json", "service-account.json", "secret.json",
+            "keystore.jks", "truststore.jks"
+    );
 
     private final RagChatService ragChatService;
     private final ProjectConfigRepository projectConfigRepo;
@@ -72,6 +85,9 @@ public class AgentTools {
             Path resolved = resolveAndValidate(filePath);
             if (resolved == null) {
                 return "错误：文件路径不合法或不在允许的项目目录内。";
+            }
+            if (isBlockedFile(resolved)) {
+                return "错误：该文件类型被安全策略禁止读取。";
             }
             if (!Files.exists(resolved)) {
                 return "错误：文件不存在: " + filePath;
@@ -209,6 +225,18 @@ public class AgentTools {
             }
         }
         return null;
+    }
+
+    private boolean isBlockedFile(Path path) {
+        String fileName = path.getFileName().toString().toLowerCase();
+        if (BLOCKED_FILENAMES.contains(fileName)) return true;
+        for (String ext : BLOCKED_EXTENSIONS) {
+            if (fileName.endsWith(ext)) return true;
+        }
+        // 检查路径中是否包含 .git 子目录
+        String pathStr = path.toString().replace('\\', '/');
+        if (pathStr.contains("/.git/")) return true;
+        return false;
     }
 
     private boolean isInsideProject(Path target, Path projectDir) {

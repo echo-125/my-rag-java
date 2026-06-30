@@ -229,12 +229,26 @@ public class RagChatService {
         }
         ChatClient chatClient = modelRouter.getChatClient(configId);
 
-        boolean streaming = streamingCache.computeIfAbsent(configId,
-                id -> llmConfigService.findRawById(id)
-                        .map(e -> Boolean.TRUE.equals(e.getSupportsStreaming()))
-                        .orElse(false));
+        // 读取模型配置：streaming + toolCalling
+        final UUID cfgId = configId;
+        final boolean[] modelFlags = {false, false}; // [streaming, toolCalling]
+        llmConfigService.findRawById(cfgId).ifPresent(e -> {
+            modelFlags[0] = Boolean.TRUE.equals(e.getSupportsStreaming());
+            modelFlags[1] = Boolean.TRUE.equals(e.getEnableToolCalling());
+        });
+        boolean streaming = streamingCache.computeIfAbsent(cfgId, id -> modelFlags[0]);
 
         // 5. 构建 Prompt：System + History + User，保存对话到历史
+        if (modelFlags[1]) {
+            systemPrompt += "\n\n=== 可用工具 ===\n"
+                    + "你可以使用以下工具来帮助回答用户问题：\n"
+                    + "- searchKnowledge(query): 搜索知识库中的代码和文档\n"
+                    + "- readFile(filePath): 读取指定文件的内容\n"
+                    + "- listDirectory(dirPath): 列出目录下的文件和子目录\n"
+                    + "- getKnowledgeBaseStats(): 获取知识库统计信息（项目列表、chunk 数量）\n"
+                    + "当用户的问题需要查看具体文件、浏览项目结构或了解知识库状态时，请主动调用工具。\n"
+                    + "=== 工具说明结束 ===";
+        }
         if (streaming) {
             log.debug("使用流式对话, 会话: {}", sessionId);
 
@@ -243,8 +257,10 @@ public class RagChatService {
             StringBuilder fullResponse = new StringBuilder();
 
             var spec = chatClient.prompt()
-                    .system(systemPrompt)
-                    .tools(agentToolsProvider.getObject());
+                    .system(systemPrompt);
+            if (modelFlags[1]) {
+                spec.tools(agentToolsProvider.getObject());
+            }
             if (!history.isEmpty()) {
                 spec.messages(history);
             }
@@ -265,9 +281,12 @@ public class RagChatService {
         } else {
             log.debug("使用非流式对话, 会话: {}", sessionId);
 
+            boolean toolCallingEnabled = modelFlags[1];
             var spec = chatClient.prompt()
-                    .system(systemPrompt)
-                    .tools(agentToolsProvider.getObject());
+                    .system(systemPrompt);
+            if (toolCallingEnabled) {
+                spec.tools(agentToolsProvider.getObject());
+            }
             if (!history.isEmpty()) {
                 spec.messages(history);
             }
@@ -347,10 +366,25 @@ public class RagChatService {
         }
         ChatClient chatClient = modelRouter.getChatClient(configId);
 
-        boolean streaming = streamingCache.computeIfAbsent(configId,
-                id -> llmConfigService.findRawById(id)
-                        .map(e -> Boolean.TRUE.equals(e.getSupportsStreaming()))
-                        .orElse(false));
+        // 读取模型配置：streaming + toolCalling
+        final UUID cfgId2 = configId;
+        final boolean[] modelFlags2 = {false, false};
+        llmConfigService.findRawById(cfgId2).ifPresent(e -> {
+            modelFlags2[0] = Boolean.TRUE.equals(e.getSupportsStreaming());
+            modelFlags2[1] = Boolean.TRUE.equals(e.getEnableToolCalling());
+        });
+        boolean streaming = streamingCache.computeIfAbsent(cfgId2, id -> modelFlags2[0]);
+
+        if (modelFlags2[1]) {
+            systemPrompt += "\n\n=== 可用工具 ===\n"
+                    + "你可以使用以下工具来帮助回答用户问题：\n"
+                    + "- searchKnowledge(query): 搜索知识库中的代码和文档\n"
+                    + "- readFile(filePath): 读取指定文件的内容\n"
+                    + "- listDirectory(dirPath): 列出目录下的文件和子目录\n"
+                    + "- getKnowledgeBaseStats(): 获取知识库统计信息（项目列表、chunk 数量）\n"
+                    + "当用户的问题需要查看具体文件、浏览项目结构或了解知识库状态时，请主动调用工具。\n"
+                    + "=== 工具说明结束 ===";
+        }
 
         // 6. 构建引用 JSON（发送给前端）
         String sourcesJson = buildSourcesJson(citations);
@@ -362,8 +396,10 @@ public class RagChatService {
             StringBuilder fullResponse = new StringBuilder();
 
             var spec = chatClient.prompt()
-                    .system(systemPrompt)
-                    .tools(agentToolsProvider.getObject());
+                    .system(systemPrompt);
+            if (modelFlags2[1]) {
+                spec.tools(agentToolsProvider.getObject());
+            }
             if (!history.isEmpty()) {
                 spec.messages(history);
             }
@@ -399,9 +435,12 @@ public class RagChatService {
         } else {
             log.debug("使用非流式对话（带引用）, 会话: {}", sessionId);
 
+            boolean toolCallingEnabled = modelFlags2[1];
             var spec = chatClient.prompt()
-                    .system(systemPrompt)
-                    .tools(agentToolsProvider.getObject());
+                    .system(systemPrompt);
+            if (toolCallingEnabled) {
+                spec.tools(agentToolsProvider.getObject());
+            }
             if (!history.isEmpty()) {
                 spec.messages(history);
             }

@@ -322,12 +322,14 @@ const App = {
         if (responseDiv) {
           // 保留反馈按钮和工具指示器（Markdown 渲染会清空 innerHTML）
           const existingBar = responseDiv.querySelector('.feedback-bar');
+          const existingTool = responseDiv.parentNode.querySelector('.tool-indicator');
           responseDiv.innerHTML = marked.parse(App.state.pendingText);
           App.chat.renderMermaid(responseDiv);
           responseDiv.querySelectorAll('pre code').forEach((block) => {
             if (!block.classList.contains('language-mermaid') && window.hljs) hljs.highlightElement(block);
           });
           if (existingBar) responseDiv.appendChild(existingBar);
+          if (existingTool) responseDiv.parentNode.insertBefore(existingTool, responseDiv);
         }
         App.state.renderScheduled = false;
       });
@@ -1476,6 +1478,11 @@ const App = {
               <td class="px-4 py-3 font-medium text-gray-800 text-sm">${App.utils.escHtml(c.name)}</td>
               <td class="px-4 py-3 text-sm text-gray-600">${App.utils.escHtml(c.modelName || '—')}</td>
               <td class="px-4 py-3">${c.isActive ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">● 已激活</span>' : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">○ 未激活</span>'}</td>
+              <td class="px-4 py-3 text-center">
+                <button onclick="App.settings.llm.toggleToolCalling('${c.id}', ${!c.enableToolCalling})" class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${c.enableToolCalling ? 'bg-primary' : 'bg-gray-300'}" title="${c.enableToolCalling ? 'Agent 已开启' : 'Agent 已关闭'}">
+                  <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${c.enableToolCalling ? 'translate-x-4.5' : 'translate-x-0.5'}" style="transform: translateX(${c.enableToolCalling ? '18px' : '2px'})"></span>
+                </button>
+              </td>
               <td class="px-4 py-2.5 text-right"><div class="flex gap-1.5 justify-end flex-wrap">
                 <button class="px-2 py-1 text-xs border border-gray-200 text-gray-600 rounded hover:bg-gray-50 hover:border-gray-300 transition-colors" onclick="App.settings.llm.test('${c.id}', this)">测试</button>
                 ${c.isActive
@@ -1586,6 +1593,16 @@ const App = {
           }
         } catch (e) { App.utils.toast('测试异常: ' + e.message, 'error'); }
         finally { btn.disabled = false; btn.textContent = orig; }
+      },
+
+      async toggleToolCalling(id, value) {
+        try {
+          const resp = await fetch('/api/llm-configs/' + id, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enableToolCalling: value })
+          });
+          if (resp.ok) App.settings.llm.load();
+        } catch (e) { App.utils.toast('更新失败', 'error'); }
       },
     },
 

@@ -44,6 +44,10 @@ public class LlmConfigEntity {
     @Column(name = "supports_streaming", nullable = false)
     private Boolean supportsStreaming = false;
 
+    /** 是否启用 Agent 工具调用（需模型支持 Function Calling） */
+    @Column(name = "enable_tool_calling", nullable = false)
+    private Boolean enableToolCalling = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -86,6 +90,9 @@ public class LlmConfigEntity {
 
     public Boolean getSupportsStreaming() { return supportsStreaming; }
     public void setSupportsStreaming(Boolean supportsStreaming) { this.supportsStreaming = supportsStreaming; }
+
+    public Boolean getEnableToolCalling() { return enableToolCalling; }
+    public void setEnableToolCalling(Boolean enableToolCalling) { this.enableToolCalling = enableToolCalling; }
 
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
