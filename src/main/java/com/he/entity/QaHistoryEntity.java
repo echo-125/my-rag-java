@@ -11,6 +11,7 @@ import java.util.UUID;
 @Table(name = "qa_history")
 public class QaHistoryEntity {
 
+    /** 主键ID */
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -27,6 +28,7 @@ public class QaHistoryEntity {
     @Column(name = "model_name")
     private String modelName;
 
+    /** 创建时间 */
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

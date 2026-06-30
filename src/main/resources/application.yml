@@ -33,7 +33,7 @@ spring:
       - org.springframework.ai.model.openai.autoconfigure.OpenAiModerationAutoConfiguration
       - org.springframework.ai.model.anthropic.autoconfigure.AnthropicChatAutoConfiguration
 
-# LangChain4j Embedding 配置由数据库 embedding_config 表管理（通过前端设置页面）
+# LangChain4j Embedding 配置由数据库 config_embedding 表管理（通过前端设置页面）
 # pgvector 配置
 pgvector:
   table: document_chunks

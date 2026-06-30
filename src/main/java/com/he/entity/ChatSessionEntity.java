@@ -11,6 +11,7 @@ import java.util.UUID;
 @Table(name = "chat_session")
 public class ChatSessionEntity {
 
+    /** 主键ID */
     @Id
     @Column(columnDefinition = "UUID")
     private UUID id;
@@ -19,9 +20,11 @@ public class ChatSessionEntity {
     @Column(nullable = false, length = 200)
     private String title;
 
+    /** 创建时间 */
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /** 更新时间 */
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

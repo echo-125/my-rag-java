@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Spring AI 动态模型路由服务。
- * 优先从数据库 llm_config 表读取激活的配置，提供 ChatClient。
+ * 优先从数据库 config_llm 表读取激活的配置，提供 ChatClient。
  */
 @Service
 public class SpringAiModelRouterService {

@@ -8,9 +8,10 @@ import java.util.UUID;
  * LLM 配置实体 —— 存储不同 LLM 的 API 连接信息。
  */
 @Entity
-@Table(name = "llm_config")
+@Table(name = "config_llm")
 public class LlmConfigEntity {
 
+    /** 主键ID */
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -48,9 +49,11 @@ public class LlmConfigEntity {
     @Column(name = "enable_tool_calling", nullable = false)
     private Boolean enableToolCalling = false;
 
+    /** 创建时间 */
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /** 更新时间 */
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

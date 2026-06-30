@@ -8,9 +8,10 @@ import java.util.UUID;
  * 项目配置实体 —— 持久化入库项目的路径配置。
  */
 @Entity
-@Table(name = "project_config")
+@Table(name = "config_project")
 public class ProjectConfigEntity {
 
+    /** 主键ID */
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -34,6 +35,7 @@ public class ProjectConfigEntity {
     @Column(length = 2000)
     private String description;
 
+    /** 创建时间 */
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

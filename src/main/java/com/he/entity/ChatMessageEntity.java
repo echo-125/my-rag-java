@@ -11,10 +11,12 @@ import java.util.UUID;
 @Table(name = "chat_message")
 public class ChatMessageEntity {
 
+    /** 主键ID */
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    /** 所属会话ID */
     @Column(name = "session_id", nullable = false, columnDefinition = "UUID")
     private UUID sessionId;
 
@@ -26,6 +28,7 @@ public class ChatMessageEntity {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
+    /** 创建时间 */
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

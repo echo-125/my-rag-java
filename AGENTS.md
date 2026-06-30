@@ -49,7 +49,7 @@ node tests/setup-test-data.js
 ## 非显而易见的实现细节
 
 ### Embedding 模型懒加载
-`LangChain4jConfig.DatabaseBackedEmbeddingModel` 是一个**懒加载代理**，首次调用 `embed()` 时从 `embedding_config` 表读取激活配置构建实际模型。`reset()` 清除代理。切换 Embedding 模型时，`EmbeddingConfigService.activate()` 会自动 **DROP 重建 `document_chunks` 表**（旧数据全量丢失——本地单用户可接受）。
+`LangChain4jConfig.DatabaseBackedEmbeddingModel` 是一个**懒加载代理**，首次调用 `embed()` 时从 `config_embedding` 表读取激活配置构建实际模型。`reset()` 清除代理。切换 Embedding 模型时，`EmbeddingConfigService.activate()` 会自动 **DROP 重建 `document_chunks` 表**（旧数据全量丢失——本地单用户可接受）。
 
 ### 启动时维度校验
 `LangChain4jConfig.verifyOrRecreateTable()` 检查 `document_chunks` 表的 vector 维度是否匹配 Embedding 配置。不匹配则 **DROP 表**，让 `createTable=true` 重新创建。启动时还会自动添加 `search_vector tsvector` 列用于 BM25 全文检索。
@@ -58,7 +58,7 @@ node tests/setup-test-data.js
 `RagChatService.buildRetrieverWithPool()` 构建 `HybridContentRetriever`，融合向量检索（`EmbeddingStoreContentRetriever`）和 BM25 关键词检索（`PgVectorKeywordContentRetriever`）。BM25 通过 PostgreSQL `tsvector/tsquery` 实现，检索后用 RRF（Reciprocal Rank Fusion）融合排序。入库时 `IngestionService` 自动填充 `search_vector` 列。
 
 ### Reranking 精排
-`RerankingService` 调用 Ollama `/api/rerank` 端点，一次 HTTP 完成所有候选文档评分。支持 Ollama 本地模型和远程 API 两种接入方式（`RerankingConfigEntity.provider`）。激活的 reranking 模型配置存储在 `reranking_config` 表。
+`RerankingService` 调用 Ollama `/api/rerank` 端点，一次 HTTP 完成所有候选文档评分。支持 Ollama 本地模型和远程 API 两种接入方式（`RerankingConfigEntity.provider`）。激活的 reranking 模型配置存储在 `config_reranking` 表。
 
 ### 查询改写
 `QueryRewriteService` 调用 LLM 将用户口语化/模糊的问题改写为精确检索 query，prompt 中注入最近 2 轮对话历史解决指代问题。失败时自动 fallback 到原始 query。
@@ -78,7 +78,7 @@ node tests/setup-test-data.js
 - `searchKnowledge(query)` — 复用 `retrieve()` 混合检索管线
 - `readFile(filePath)` — 路径穿越防护 + 白名单 + 敏感文件拦截（`.env`/`.pem`/`.key` 等）+ 8000 字符截断
 - `listDirectory(dirPath)` — depth=1 遍历，最多 50 条
-- `getKnowledgeBaseStats()` — 查询 `document_chunks` + `project_config` 统计
+- `getKnowledgeBaseStats()` — 查询 `document_chunks` + `config_project` 统计
 
 工具调用元数据通过 `AgentToolMetadata` ThreadLocal 收集，SSE 最后一个事件追加 `toolMetadata` 数组，前端渲染工具指示器（工具名 + 耗时）。
 
@@ -114,10 +114,10 @@ System.setProperty("langchain4j.http.clientBuilderFactory",
 
 - **`document_chunks`**——LangChain4j 的 `PgVectorEmbeddingStore` 自动创建/管理（`createTable=true`）。含 `embedding`、`text`、`search_vector` 列 + 9 个元数据列。统计用 `JdbcTemplate` 查询
 - **`chat_session` / `chat_message`**——对话历史持久化（JPA `ddl-auto: update`）
-- **`reranking_config`**——Reranking 模型配置（JPA 自动创建）
+- **`config_reranking`**——Reranking 模型配置（JPA 自动创建）
 - **`evaluation_testset` / `evaluation_testcase` / `evaluation_batch` / `evaluation_result`**——评估体系（JPA 自动创建）
 - **`qa_feedback`**——用户反馈（JPA 自动创建）
-- **`llm_config` / `embedding_config` / `project_config` / `qa_history` / `rag_config`**——JPA 自动创建
+- **`config_llm` / `config_embedding` / `config_project` / `qa_history` / `config_rag`**——JPA 自动创建
 
 首次运行需执行 `src/main/resources/db/init.sql` 创建数据库和 pgvector 扩展。
 

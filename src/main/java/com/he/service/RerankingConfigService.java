@@ -36,26 +36,26 @@ public class RerankingConfigService {
     }
 
     /**
-     * 启动时校验 reranking_config 表 schema，旧表（ollama_url 列）自动重建。
+     * 启动时校验 config_reranking 表 schema，旧表（ollama_url 列）自动重建。
      */
     @PostConstruct
     public void ensureTableSchema() {
         try {
             Boolean exists = jdbcTemplate.queryForObject(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'reranking_config')",
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'config_reranking')",
                     Boolean.class);
             if (Boolean.TRUE.equals(exists)) {
                 Boolean hasOldColumn = jdbcTemplate.queryForObject(
-                        "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'reranking_config' AND column_name = 'ollama_url')",
+                        "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'config_reranking' AND column_name = 'ollama_url')",
                         Boolean.class);
                 if (Boolean.TRUE.equals(hasOldColumn)) {
-                    log.warn("reranking_config 表为旧 schema（含 ollama_url 列），自动重建");
-                    jdbcTemplate.execute("DROP TABLE reranking_config");
+                    log.warn("config_reranking 表为旧 schema（含 ollama_url 列），自动重建");
+                    jdbcTemplate.execute("DROP TABLE config_reranking");
                     // JPA 会在下次访问时自动重建
                 }
             }
         } catch (Exception e) {
-            log.warn("reranking_config 表 schema 校验失败: {}", e.getMessage());
+            log.warn("config_reranking 表 schema 校验失败: {}", e.getMessage());
         }
     }
 

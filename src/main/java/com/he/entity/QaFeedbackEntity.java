@@ -4,24 +4,31 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * 用户反馈实体 —— 存储用户对AI回答的评价。
+ */
 @Entity
 @Table(name = "qa_feedback")
 public class QaFeedbackEntity {
 
+    /** 主键ID */
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    /** 关联的问答历史ID */
     @Column(name = "qa_history_id", nullable = false, columnDefinition = "UUID")
     private UUID qaHistoryId;
 
-    /** 1=👍, -1=👎 */
+    /** 评分：1=👍, -1=👎 */
     @Column(nullable = false)
     private Short rating;
 
+    /** 用户评论 */
     @Column(length = 1024)
     private String comment;
 
+    /** 创建时间 */
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

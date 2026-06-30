@@ -554,7 +554,7 @@ public class RagChatService {
          * RRF 融合常数 k。
          * 标准 RRF（Reciprocal Rank Fusion）论文推荐值 k=60。
          * 值越小，排名靠前的结果权重越高；值越大，排名靠后的结果也有显著贡献。
-         * 若需调优，可提取为 rag_config 配置项。
+         * 若需调优，可提取为 config_rag 配置项。
          */
         private static final int RRF_K = 60;
 

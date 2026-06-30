@@ -9,9 +9,10 @@ import java.util.UUID;
  * 支持 Ollama（本地）和 OpenAI 兼容 API 两种 provider。
  */
 @Entity
-@Table(name = "embedding_config")
+@Table(name = "config_embedding")
 public class EmbeddingConfigEntity {
 
+    /** 主键ID */
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -44,9 +45,11 @@ public class EmbeddingConfigEntity {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = false;
 
+    /** 创建时间 */
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /** 更新时间 */
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

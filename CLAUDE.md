@@ -93,7 +93,7 @@ PostgreSQL：localhost，账号 `postgres/123456`
 ### 新增表（JPA `ddl-auto: update` 自动创建）
 - **`chat_session`**：id, title, created_at, updated_at
 - **`chat_message`**：id, session_id, role, content, created_at
-- **`reranking_config`**：id, name, provider, model_name, base_url, api_key, is_active
+- **`config_reranking`**：id, name, provider, model_name, base_url, api_key, is_active
 - **`evaluation_testset`**：id, name, description, created_at, updated_at
 - **`evaluation_testcase`**：id, testset_id, question, expected_files, tags, created_at
 - **`evaluation_batch`**：id, testset_id, config_snapshot, status, cancelled, total_cases, completed_cases, precision_at_k, recall_score, mrr, hit_rate, avg_latency_ms, evaluated_at, error_message
@@ -101,7 +101,7 @@ PostgreSQL：localhost，账号 `postgres/123456`
 - **`qa_feedback`**：id, qa_history_id, rating, comment, created_at
 
 ### 原有表
-- **`llm_config`** / **`embedding_config`** / **`project_config`** / **`qa_history`** / **`rag_config`**（llm_config 含 `enable_tool_calling` 字段）
+- **`config_llm`** / **`config_embedding`** / **`config_project`** / **`qa_history`** / **`config_rag`**（config_llm 含 `enable_tool_calling` 字段）
 
 ## 项目结构
 

@@ -8,9 +8,10 @@ import java.util.UUID;
  * Reranking 模型配置实体 —— 支持 Ollama 本地和远程 API 两种接入方式。
  */
 @Entity
-@Table(name = "reranking_config")
+@Table(name = "config_reranking")
 public class RerankingConfigEntity {
 
+    /** 主键ID */
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -39,9 +40,11 @@ public class RerankingConfigEntity {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = false;
 
+    /** 创建时间 */
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /** 更新时间 */
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

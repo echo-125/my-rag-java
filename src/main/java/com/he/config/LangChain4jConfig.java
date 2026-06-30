@@ -22,8 +22,8 @@ import java.util.List;
 
 /**
  * LangChain4j 组件配置。
- * EmbeddingModel 懒加载：首次使用时从数据库读取激活的 embedding_config。
- * EmbeddingStore 使用 PgVector，维度由激活的 embedding_config 决定。
+ * EmbeddingModel 懒加载：首次使用时从数据库读取激活的 config_embedding。
+ * EmbeddingStore 使用 PgVector，维度由激活的 config_embedding 决定。
  */
 @Configuration
 public class LangChain4jConfig {
@@ -141,7 +141,7 @@ public class LangChain4jConfig {
 
     /**
      * 数据库驱动的 EmbeddingModel。
-     * 首次 embed 时从数据库读取激活的 embedding_config 并构建实际的模型。
+     * 首次 embed 时从数据库读取激活的 config_embedding 并构建实际的模型。
      * 配置变更后调用 reset() 清除缓存。
      */
     public static class DatabaseBackedEmbeddingModel implements EmbeddingModel {

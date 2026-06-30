@@ -8,19 +8,23 @@ import java.time.Instant;
  * configKey 为主键，如 "max_segment_size"、"semantic_threshold"。
  */
 @Entity
-@Table(name = "rag_config")
+@Table(name = "config_rag")
 public class RagConfigEntity {
 
+    /** 配置键（主键） */
     @Id
     @Column(name = "config_key", length = 1024)
     private String configKey;
 
+    /** 配置值 */
     @Column(name = "config_value", nullable = false)
     private String configValue;
 
+    /** 配置描述 */
     @Column(length = 255)
     private String description;
 
+    /** 更新时间 */
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

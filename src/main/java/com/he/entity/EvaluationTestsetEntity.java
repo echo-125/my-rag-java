@@ -4,23 +4,31 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * 评估测试集实体 —— 存储评估测试集的元数据。
+ */
 @Entity
 @Table(name = "evaluation_testset")
 public class EvaluationTestsetEntity {
 
+    /** 主键ID */
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    /** 测试集名称 */
     @Column(nullable = false, length = 256)
     private String name;
 
+    /** 测试集描述 */
     @Column(length = 1024)
     private String description;
 
+    /** 创建时间 */
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /** 更新时间 */
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

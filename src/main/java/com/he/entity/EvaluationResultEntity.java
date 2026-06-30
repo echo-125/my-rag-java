@@ -4,41 +4,55 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * 评估结果实体 —— 存储单个测试用例的评估详情。
+ */
 @Entity
 @Table(name = "evaluation_result")
 public class EvaluationResultEntity {
 
+    /** 主键ID */
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    /** 评估批次ID */
     @Column(name = "batch_id", nullable = false, columnDefinition = "UUID")
     private UUID batchId;
 
+    /** 测试用例ID */
     @Column(name = "testcase_id", nullable = false, columnDefinition = "UUID")
     private UUID testcaseId;
 
+    /** 测试问题 */
     @Column(nullable = false, columnDefinition = "TEXT")
     private String question;
 
+    /** 检索到的文件列表（JSON数组） */
     @Column(name = "retrieved_files", nullable = false, columnDefinition = "TEXT")
-    private String retrievedFiles; // JSON array
+    private String retrievedFiles;
 
+    /** 期望匹配的文件列表（JSON数组） */
     @Column(name = "expected_files", nullable = false, columnDefinition = "TEXT")
-    private String expectedFiles; // JSON array
+    private String expectedFiles;
 
+    /** 是否命中期望文件 */
     @Column(nullable = false)
     private Boolean hit;
 
+    /** 首次命中排名（1-based） */
     @Column(name = "first_hit_rank")
     private Integer firstHitRank;
 
+    /** 检索延迟（毫秒） */
     @Column(name = "latency_ms")
     private Long latencyMs;
 
+    /** 解析警告信息 */
     @Column(name = "parse_warning", length = 512)
     private String parseWarning;
 
+    /** 创建时间 */
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
