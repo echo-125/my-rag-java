@@ -43,7 +43,22 @@ mvn spring-boot:run
 `LangChain4jConfig.DatabaseBackedEmbeddingModel` 是一个**懒加载代理**，首次调用 `embed()` 时从 `embedding_config` 表读取激活配置构建实际模型。`reset()` 清除代理。切换 Embedding 模型时，`EmbeddingConfigService.activate()` 会自动 **DROP 重建 `document_chunks` 表**（旧数据全量丢失——本地单用户可接受）。
 
 ### 启动时维度校验
-`LangChain4jConfig.verifyOrRecreateTable()` 检查 `document_chunks` 表的 vector 维度是否匹配 Embedding 配置。不匹配则 **DROP 表**，让 `createTable=true` 重新创建。
+`LangChain4jConfig.verifyOrRecreateTable()` 检查 `document_chunks` 表的 vector 维度是否匹配 Embedding 配置。不匹配则 **DROP 表**，让 `createTable=true` 重新创建。启动时还会自动添加 `search_vector tsvector` 列用于 BM25 全文检索。
+
+### 混合检索（BM25 + 向量）
+`RagChatService.buildRetrieverWithPool()` 构建 `HybridContentRetriever`，融合向量检索（`EmbeddingStoreContentRetriever`）和 BM25 关键词检索（`PgVectorKeywordContentRetriever`）。BM25 通过 PostgreSQL `tsvector/tsquery` 实现，检索后用 RRF（Reciprocal Rank Fusion）融合排序。入库时 `IngestionService` 自动填充 `search_vector` 列。
+
+### Reranking 精排
+`RerankingService` 调用 Ollama `/api/rerank` 端点，一次 HTTP 完成所有候选文档评分。支持 Ollama 本地模型和远程 API 两种接入方式（`RerankingConfigEntity.provider`）。激活的 reranking 模型配置存储在 `reranking_config` 表。
+
+### 查询改写
+`QueryRewriteService` 调用 LLM 将用户口语化/模糊的问题改写为精确检索 query，prompt 中注入最近 2 轮对话历史解决指代问题。失败时自动 fallback 到原始 query。
+
+### 评估体系
+`EvaluationService` 支持离线批量评估（异步 VirtualThread）和在线用户反馈（👍👎）。测试集存储在 `evaluation_testset/evaluation_testcase` 表，评估结果存储在 `evaluation_batch/evaluation_result` 表。种子测试集通过 `@EventListener(ApplicationReadyEvent.class)` 自动导入。评估指标：Precision@K、Recall、MRR、Hit Rate，文件名匹配归一化。
+
+### 对话历史持久化
+`ConversationService` 使用内存 + DB 双写策略。`chat_session` 表存储会话元数据，`chat_message` 表存储消息。启动时按需从 DB 加载到内存。前端 sidebar 显示历史会话列表，支持切换和删除。
 
 ### OkHttp Windows 兼容
 `RagApplication.main()` 中设置系统属性：
@@ -56,37 +71,28 @@ System.setProperty("langchain4j.http.clientBuilderFactory",
 ### 入库使用 VirtualThread
 `IngestionService.ingest()` 使用 `Thread.startVirtualThread()` 异步执行。不是 `@Async`，不是 `CompletableFuture`。
 
-### SSE 端点差异
-- **入库** `POST /api/ingestion/start` → `SseEmitter`（Servlet 同步流）。前端在 `fetch` 流结束后才发下一个项目。
-- **问答** `POST /api/chat/stream` → `Flux<String>`（Reactive 流）。**QA 历史不由后端自动保存**——前端在流结束后单独调用 `POST /api/chat/save`。
-
-### 前端 `/api/chat/save` 缺 modelName
-`app.js` 保存问答时未传递 `modelName` 字段，即使后端 `QaSaveRequest` 中定义了该字段。修复需修改前端 `send()` 中的 fetch 调用。
-
-### 文本清洗中的公司水印
-`IngestionService.cleanSegments()` 中硬编码了特定中文公司的页眉页脚水印模式（`"广州市享印畅链信息技术有限公司"` 等）。处理其他公司文档时需修改或外部化此列表。
-
 ### RAG 配置默认值自动插入
-`RagConfigService.initializeDefaults()` 使用 `@PostConstruct` + try-catch。数据库不可用时启动不失败，记录警告后继续。首次数据库可用时插入 7 个默认配置项。
+`RagConfigService.initializeDefaults()` 使用 `@PostConstruct` + try-catch。数据库不可用时启动不失败，记录警告后继续。首次数据库可用时插入默认配置项（含 `enable_bm25`、`enable_reranking`、`enable_query_rewrite` 等）。
 
 ### 缓存实现
 `RagApplication` 中的 `ConcurrentMapCacheManager` 是**进程内内存缓存**（非 Redis）。`ragConfigCache`、`activeLlmConfig`、`activeEmbeddingConfig` 三个缓存分区。应用重启=缓存清空。
-
-### 系统提示词硬编码
-`RagChatService.chat()` 第 97-101 行的系统提示词、`MAX_RESULTS=5`、`MIN_SCORE=0.5` 都在 Java 代码中硬编码，前端不可配置。修改需改 Java 源码。
 
 ---
 
 ## 测试现状
 
-16/16 测试通过，全部是 **splitter 切分器测试**。无 Controller 集成测试，无端到端前端测试。`ChunkQualityAnalyzer.java` 在 `test` 目录下但实为分析工具而非测试类。
+70/70 测试通过，包括 **splitter 切分器测试**、**LlmConfigService 测试**、**IngestionServiceClean 测试**。
 
 ---
 
 ## 数据库表概览
 
-- **`document_chunks`**——LangChain4j 的 `PgVectorEmbeddingStore` 自动创建/管理（`createTable=true`）。统计用 `JdbcTemplate` 查询，**不要通过 JPA 实体管理**
-- **`llm_config` / `embedding_config` / `project_config` / `qa_history` / `rag_config`**——JPA 自动创建（`ddl-auto: update`）
+- **`document_chunks`**——LangChain4j 的 `PgVectorEmbeddingStore` 自动创建/管理（`createTable=true`）。含 `embedding`、`text`、`search_vector` 列 + 9 个元数据列。统计用 `JdbcTemplate` 查询
+- **`chat_session` / `chat_message`**——对话历史持久化（JPA `ddl-auto: update`）
+- **`reranking_config`**——Reranking 模型配置（JPA 自动创建）
+- **`evaluation_testset` / `evaluation_testcase` / `evaluation_batch` / `evaluation_result`**——评估体系（JPA 自动创建）
+- **`qa_feedback`**——用户反馈（JPA 自动创建）
+- **`llm_config` / `embedding_config` / `project_config` / `qa_history` / `rag_config`**——JPA 自动创建
 
 首次运行需执行 `src/main/resources/db/init.sql` 创建数据库和 pgvector 扩展。
 
@@ -96,8 +102,9 @@ System.setProperty("langchain4j.http.clientBuilderFactory",
 
 - **无构建工具**：纯静态 HTML/JS，第三方库放入 `static/lib/`
 - Tailwind CSS 通过 CDN 加载（开发版本 ~4MB），离线不可用
-- `app.js` 是 ~810 行单体文件，所有功能在 `App` 命名空间下
+- `app.js` 是 ~1800 行单体文件，所有功能在 `App` 命名空间下
 - 路由无 URL hash 同步（纯 CSS `hidden` 类切换）
+- 5 个 Tab 页：对话 / 仪表盘 / 文档入库 / 评估 / 设置
 
 ---
 
