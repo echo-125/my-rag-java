@@ -36,6 +36,15 @@ public class EvaluationController {
         return ResponseEntity.accepted().body(Map.of("batchId", batchId.toString(), "status", "running"));
     }
 
+    @PostMapping("/run/{batchId}/cancel")
+    public ResponseEntity<Map<String, Object>> cancel(@PathVariable UUID batchId) {
+        boolean ok = service.cancelBatch(batchId);
+        if (!ok) {
+            return ResponseEntity.badRequest().body(Map.of("error", "任务不存在或已结束"));
+        }
+        return ResponseEntity.ok(Map.of("status", "cancelled"));
+    }
+
     @GetMapping("/run/{batchId}/status")
     public ResponseEntity<Map<String, Object>> runStatus(@PathVariable UUID batchId) {
         EvaluationBatchEntity batch = service.getBatch(batchId);
@@ -61,6 +70,29 @@ public class EvaluationController {
         Map<String, Object> resp = buildReport(batch);
         resp.put("found", true);
         return ResponseEntity.ok(resp);
+    }
+
+    @GetMapping("/history")
+    public ResponseEntity<List<Map<String, Object>>> history() {
+        List<EvaluationBatchEntity> batches = service.getRecentCompleted(20);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (EvaluationBatchEntity batch : batches) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("batchId", batch.getId().toString());
+            m.put("testsetId", batch.getTestsetId().toString());
+            String testsetName = service.getTestsetById(batch.getTestsetId())
+                    .map(ts -> ts.getName()).orElse("未知");
+            m.put("testsetName", testsetName);
+            m.put("precisionAtK", batch.getPrecisionAtK());
+            m.put("recall", batch.getRecallScore());
+            m.put("mrr", batch.getMrr());
+            m.put("hitRate", batch.getHitRate());
+            m.put("avgLatencyMs", batch.getAvgLatencyMs());
+            m.put("configSnapshot", batch.getConfigSnapshot());
+            m.put("evaluatedAt", batch.getEvaluatedAt() != null ? batch.getEvaluatedAt().toString() : null);
+            result.add(m);
+        }
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/report/{batchId}")
@@ -127,6 +159,43 @@ public class EvaluationController {
     public ResponseEntity<Void> deleteTestset(@PathVariable UUID id) {
         service.deleteTestset(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/testset/{id}/export")
+    public ResponseEntity<byte[]> exportTestset(@PathVariable UUID id) {
+        try {
+            Map<String, Object> data = service.exportTestset(id);
+            String safeName = data.get("name").toString()
+                    .replaceAll("[^a-zA-Z0-9\\u4e00-\\u9fa5_-]", "_");
+            byte[] json = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writerWithDefaultPrettyPrinter()
+                    .writeValueAsBytes(data);
+            return ResponseEntity.ok()
+                    .header("Content-Disposition", "attachment; filename=\"testset-" + safeName + ".json\"")
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .body(json);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @PostMapping("/testset/import")
+    public ResponseEntity<Map<String, Object>> importTestset(@RequestBody Map<String, Object> body) {
+        try {
+            Map<String, Object> result = service.importTestsetWithCount(body);
+            EvaluationTestsetEntity ts = (EvaluationTestsetEntity) result.get("testset");
+            int count = (int) result.get("count");
+            return ResponseEntity.ok(Map.of(
+                    "id", ts.getId().toString(),
+                    "name", ts.getName(),
+                    "importedCases", count));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", "导入失败: " + e.getMessage()));
+        }
     }
 
     @GetMapping("/testset/{id}/cases")

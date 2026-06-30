@@ -995,6 +995,7 @@ const App = {
     currentTestsetId: null,
     currentBatchId: null,
     pollTimer: null,
+    trendChart: null,
 
     safeParse(json, fallback = []) {
       try { return JSON.parse(json || '[]'); } catch { return fallback; }
@@ -1003,6 +1004,11 @@ const App = {
     async init() {
       await this.loadTestsets();
       this.loadLatestReport();
+      this.loadHistoryChart();
+      if (!this._resizeRegistered) {
+        window.addEventListener('resize', () => { if (this.trendChart) this.trendChart.resize(); });
+        this._resizeRegistered = true;
+      }
     },
 
     // ─── 测试集管理 ───
@@ -1022,9 +1028,14 @@ const App = {
               <div class="text-sm font-medium text-gray-800 truncate">${App.utils.escHtml(ts.name)}</div>
               <div class="text-xs text-gray-400">${ts.caseCount} 条用例</div>
             </div>
-            <button onclick="event.stopPropagation();App.evaluation.deleteTestset('${ts.id}','${App.utils.escHtml(ts.name)}')" class="text-gray-400 hover:text-red-500 p-1 rounded" title="删除">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            </button>
+            <div class="flex items-center gap-1 flex-shrink-0">
+              <button onclick="event.stopPropagation();App.evaluation.exportTestset('${ts.id}')" class="text-gray-400 hover:text-blue-500 p-1 rounded" title="导出">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+              </button>
+              <button onclick="event.stopPropagation();App.evaluation.deleteTestset('${ts.id}','${App.utils.escHtml(ts.name)}')" class="text-gray-400 hover:text-red-500 p-1 rounded" title="删除">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
+            </div>
           </div>
         `).join('');
       } catch (e) { console.error('加载测试集失败:', e); }
@@ -1052,6 +1063,44 @@ const App = {
         this.loadTestsets();
         App.utils.toast('测试集已删除', 'success');
       } catch (e) { App.utils.toast('删除失败', 'error'); }
+    },
+
+    async exportTestset(id) {
+      try {
+        const resp = await fetch('/api/evaluation/testset/' + id + '/export');
+        if (!resp.ok) { App.utils.toast('导出失败', 'error'); return; }
+        const blob = await resp.blob();
+        const disposition = resp.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        const filename = match ? match[1] : 'testset.json';
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        App.utils.toast('导出成功', 'success');
+      } catch (e) { App.utils.toast('导出失败: ' + e.message, 'error'); }
+    },
+
+    triggerImport() {
+      document.getElementById('importTestsetInput').click();
+    },
+
+    async handleImport(file) {
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        const resp = await fetch('/api/evaluation/testset/import', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+        const result = await resp.json();
+        if (!resp.ok) { App.utils.toast(result.error || '导入失败', 'error'); return; }
+        this.loadTestsets();
+        App.utils.toast('导入成功：' + result.name + '，' + result.importedCases + ' 条用例', 'success');
+      } catch (e) { App.utils.toast('导入失败: ' + e.message, 'error'); }
     },
 
     openCreateTestsetModal() {
@@ -1158,12 +1207,29 @@ const App = {
 
     startPolling(batchId) {
       if (this.pollTimer) clearInterval(this.pollTimer);
+      document.getElementById('cancelEvalBtn').classList.remove('hidden');
       this.pollTimer = setInterval(() => this.pollStatus(batchId), 2000);
     },
 
     resetRunBtn() {
       const btn = document.getElementById('runEvalBtn');
       if (btn) { btn.disabled = false; btn.textContent = '执行评估'; }
+      const cancelBtn = document.getElementById('cancelEvalBtn');
+      if (cancelBtn) cancelBtn.classList.add('hidden');
+    },
+
+    async cancelEval() {
+      if (!this.currentBatchId) return;
+      const cancelBtn = document.getElementById('cancelEvalBtn');
+      if (cancelBtn) { cancelBtn.disabled = true; cancelBtn.textContent = '取消中...'; }
+      try {
+        const resp = await fetch('/api/evaluation/run/' + this.currentBatchId + '/cancel', { method: 'POST' });
+        const data = await resp.json();
+        if (data.error) { App.utils.toast(data.error, 'error'); }
+      } catch (e) {
+        App.utils.toast('取消失败: ' + e.message, 'error');
+        if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = '取消'; }
+      }
     },
 
     async pollStatus(batchId) {
@@ -1182,11 +1248,18 @@ const App = {
           if (data.result) this.renderReport(data.result);
           App.utils.toast('评估完成', 'success');
           this.resetRunBtn();
+          this.loadHistoryChart();
         } else if (data.status === 'failed') {
           clearInterval(this.pollTimer);
           document.getElementById('evalStatus').textContent = '评估失败';
           App.utils.toast('评估失败: ' + (data.error || ''), 'error');
           this.resetRunBtn();
+        } else if (data.status === 'cancelled') {
+          clearInterval(this.pollTimer);
+          document.getElementById('evalStatus').textContent = '评估已取消';
+          App.utils.toast('评估已取消', 'warning');
+          this.resetRunBtn();
+          this.loadHistoryChart();
         }
       } catch (e) { console.error('轮询失败:', e); }
     },
@@ -1230,6 +1303,56 @@ const App = {
             <td class="px-4 py-2.5 text-gray-500 max-w-[200px] truncate" title="${expected.map(f => App.utils.escHtml(f)).join(', ')}">${expected.map(f => App.utils.escHtml(f.split('/').pop())).join(', ')}</td>
           </tr>`;
         }).join('')}</tbody></table>`;
+    },
+
+    // ─── 历史趋势图 ───
+    async loadHistoryChart() {
+      const container = document.getElementById('evalHistoryChart');
+      if (!container) return;
+      try {
+        const resp = await App.utils.fetchWithRetry('/api/evaluation/history');
+        const data = await resp.json();
+        if (!data || data.length === 0) {
+          container.innerHTML = '<div class="text-sm text-gray-400 text-center py-12">暂无历史数据</div>';
+          return;
+        }
+        // 按时间正序渲染
+        const sorted = [...data].sort((a, b) => (a.evaluatedAt || '').localeCompare(b.evaluatedAt || ''));
+        const times = sorted.map(b => {
+          if (!b.evaluatedAt) return '—';
+          const d = new Date(b.evaluatedAt);
+          return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+        });
+        const series = [
+          { name: 'Precision@K', data: sorted.map(b => b.precisionAtK != null ? +(b.precisionAtK * 100).toFixed(1) : null), color: '#2563eb' },
+          { name: 'Recall', data: sorted.map(b => b.recall != null ? +(b.recall * 100).toFixed(1) : null), color: '#16a34a' },
+          { name: 'MRR', data: sorted.map(b => b.mrr != null ? +b.mrr.toFixed(3) : null), color: '#9333ea' },
+          { name: 'Hit Rate', data: sorted.map(b => b.hitRate != null ? +(b.hitRate * 100).toFixed(1) : null), color: '#d97706' },
+        ];
+        if (typeof echarts === 'undefined') {
+          container.innerHTML = '<div class="text-sm text-gray-400 text-center py-12">ECharts 未加载</div>';
+          return;
+        }
+        if (this.trendChart) { this.trendChart.dispose(); }
+        const chart = echarts.init(container);
+        this.trendChart = chart;
+        chart.setOption({
+          tooltip: { trigger: 'axis', formatter: params => {
+            let tip = '<b>' + params[0].axisValue + '</b><br/>';
+            params.forEach(p => { if (p.value != null) tip += p.marker + ' ' + p.seriesName + ': <b>' + p.value + (p.seriesName === 'MRR' ? '' : '%') + '</b><br/>'; });
+            return tip;
+          }},
+          legend: { top: 10, textStyle: { fontSize: 11 } },
+          grid: { left: 50, right: 20, top: 45, bottom: 30 },
+          xAxis: { type: 'category', data: times, axisLabel: { fontSize: 10 } },
+          yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: v => v + '%' }, min: 0 },
+          series: series.map(s => ({
+            name: s.name, type: 'line', data: s.data, smooth: true,
+            lineStyle: { width: 2 }, itemStyle: { color: s.color },
+            symbol: 'circle', symbolSize: 6
+          }))
+        });
+      } catch (e) { console.error('加载历史趋势失败:', e); }
     },
   },
 

@@ -48,6 +48,9 @@ public class EvaluationBatchEntity {
     @Column(name = "error_message", length = 1024)
     private String errorMessage;
 
+    @Column(name = "cancelled", nullable = false)
+    private Boolean cancelled = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -80,5 +83,7 @@ public class EvaluationBatchEntity {
     public void setEvaluatedAt(Instant evaluatedAt) { this.evaluatedAt = evaluatedAt; }
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+    public Boolean getCancelled() { return cancelled; }
+    public void setCancelled(Boolean cancelled) { this.cancelled = cancelled; }
     public Instant getCreatedAt() { return createdAt; }
 }

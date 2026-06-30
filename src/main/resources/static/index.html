@@ -304,7 +304,11 @@
             <div class="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col overflow-hidden">
               <div class="p-4 border-b border-gray-50 bg-gray-50/50 flex items-center justify-between">
                 <h2 class="text-sm font-bold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-blue-500 rounded-full"></div>测试集</h2>
-                <button onclick="App.evaluation.openCreateTestsetModal()" class="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors font-medium">+ 新建</button>
+                <div class="flex items-center gap-2">
+                  <input type="file" id="importTestsetInput" accept=".json" class="hidden" onchange="App.evaluation.handleImport(this.files[0]);this.value=''">
+                  <button onclick="App.evaluation.triggerImport()" class="text-xs px-3 py-1.5 bg-green-50 text-green-600 hover:bg-green-100 border border-green-200 rounded-md transition-colors font-medium">导入</button>
+                  <button onclick="App.evaluation.openCreateTestsetModal()" class="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 rounded-md transition-colors font-medium">+ 新建</button>
+                </div>
               </div>
               <div id="testsetList" class="overflow-y-auto max-h-[200px] custom-scrollbar">
                 <div class="text-sm text-gray-400 text-center py-6">加载中...</div>
@@ -340,7 +344,10 @@
             <div id="evalProgress" class="hidden bg-white rounded-xl border border-gray-100 shadow-sm p-5">
               <div class="flex items-center justify-between text-sm mb-3">
                 <span id="evalStatus" class="font-medium text-gray-800">评估中...</span>
-                <span id="evalProgressText" class="text-gray-500">0/0</span>
+                <div class="flex items-center gap-3">
+                  <span id="evalProgressText" class="text-gray-500">0/0</span>
+                  <button onclick="App.evaluation.cancelEval()" id="cancelEvalBtn" class="hidden px-3 py-1 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded-md text-xs font-medium transition-colors">取消</button>
+                </div>
               </div>
               <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                 <div id="evalProgressBar" class="bg-primary h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
@@ -365,6 +372,14 @@
                 <div class="text-2xl font-bold text-amber-600" id="metricHitRate">—</div>
                 <div class="text-xs text-gray-500 mt-1">Hit Rate</div>
               </div>
+            </div>
+
+            <!-- 历史趋势图 -->
+            <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+              <div class="p-4 border-b border-gray-50 bg-gray-50/50">
+                <h2 class="text-sm font-bold text-gray-800 flex items-center gap-2"><div class="w-1.5 h-4 bg-indigo-500 rounded-full"></div>历史趋势</h2>
+              </div>
+              <div id="evalHistoryChart" class="w-full h-[280px]"></div>
             </div>
 
             <!-- 逐题明细表 -->

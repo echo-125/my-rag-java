@@ -9,4 +9,6 @@ public interface EvaluationBatchRepository extends JpaRepository<EvaluationBatch
     List<EvaluationBatchEntity> findByTestsetIdOrderByCreatedAtDesc(UUID testsetId);
 
     EvaluationBatchEntity findFirstByStatusOrderByCreatedAtDesc(String status);
+
+    List<EvaluationBatchEntity> findByStatusOrderByCreatedAtDesc(String status);
 }

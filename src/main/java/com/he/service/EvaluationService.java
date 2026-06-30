@@ -109,6 +109,19 @@ public class EvaluationService {
         return batchId;
     }
 
+    public boolean cancelBatch(UUID batchId) {
+        EvaluationBatchEntity batch = batchRepo.findById(batchId).orElse(null);
+        if (batch == null || !"running".equals(batch.getStatus())) {
+            return false;
+        }
+        batch.setCancelled(true);
+        batch.setStatus("cancelled");
+        batch.setErrorMessage("用户取消");
+        batchRepo.save(batch);
+        log.info("评估任务已取消 batchId={}", batchId);
+        return true;
+    }
+
     private void executeBatch(UUID batchId, List<EvaluationTestcaseEntity> cases, int k) {
         EvaluationBatchEntity batch = batchRepo.findById(batchId).orElseThrow();
         int totalHits = 0;
@@ -121,6 +134,16 @@ public class EvaluationService {
 
         try {
             for (int i = 0; i < cases.size(); i++) {
+                // 每轮检查取消标记
+                batch = batchRepo.findById(batchId).orElseThrow();
+                if (Boolean.TRUE.equals(batch.getCancelled())) {
+                    batch.setCompletedCases(i);
+                    batch.setStatus("cancelled");
+                    batch.setErrorMessage("用户取消");
+                    batchRepo.save(batch);
+                    log.info("评估任务已取消 batchId={}", batchId);
+                    return;
+                }
                 EvaluationTestcaseEntity tc = cases.get(i);
                 long start = System.nanoTime();
 
@@ -275,6 +298,11 @@ public class EvaluationService {
         return batchRepo.findFirstByStatusOrderByCreatedAtDesc("completed");
     }
 
+    public List<EvaluationBatchEntity> getRecentCompleted(int limit) {
+        return batchRepo.findByStatusOrderByCreatedAtDesc("completed")
+                .stream().limit(limit).collect(Collectors.toList());
+    }
+
     public List<EvaluationResultEntity> getBatchResults(UUID batchId) {
         return resultRepo.findByBatchIdOrderByCreatedAtAsc(batchId);
     }
@@ -328,5 +356,58 @@ public class EvaluationService {
 
     public void deleteTestcase(UUID id) {
         testcaseRepo.deleteById(id);
+    }
+
+    public Map<String, Object> exportTestset(UUID testsetId) {
+        EvaluationTestsetEntity ts = testsetRepo.findById(testsetId)
+                .orElseThrow(() -> new IllegalArgumentException("测试集不存在"));
+        List<EvaluationTestcaseEntity> cases = testcaseRepo.findByTestsetIdOrderByCreatedAtAsc(testsetId);
+        Map<String, Object> export = new LinkedHashMap<>();
+        export.put("name", ts.getName());
+        export.put("description", ts.getDescription());
+        List<Map<String, Object>> caseList = new ArrayList<>();
+        for (EvaluationTestcaseEntity tc : cases) {
+            Map<String, Object> c = new LinkedHashMap<>();
+            c.put("question", tc.getQuestion());
+            c.put("expected_files", parseJsonArray(tc.getExpectedFiles()));
+            c.put("tags", parseJsonArray(tc.getTags()));
+            caseList.add(c);
+        }
+        export.put("cases", caseList);
+        return export;
+    }
+
+    public Map<String, Object> importTestsetWithCount(Map<String, Object> data) {
+        String name = (String) data.get("name");
+        if (name == null || name.isBlank()) throw new IllegalArgumentException("测试集名称不能为空");
+        Object casesObj = data.get("cases");
+        if (!(casesObj instanceof List)) throw new IllegalArgumentException("cases 字段缺失或格式错误");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cases = (List<Map<String, Object>>) casesObj;
+
+        EvaluationTestsetEntity ts = new EvaluationTestsetEntity();
+        ts.setName(name.trim());
+        ts.setDescription((String) data.get("description"));
+        ts = testsetRepo.save(ts);
+
+        List<EvaluationTestcaseEntity> toSave = new ArrayList<>();
+        for (Map<String, Object> c : cases) {
+            String question = (String) c.get("question");
+            if (question == null || question.isBlank()) continue;
+            EvaluationTestcaseEntity tc = new EvaluationTestcaseEntity();
+            tc.setTestsetId(ts.getId());
+            tc.setQuestion(question.trim());
+            Object ef = c.get("expected_files");
+            tc.setExpectedFiles(ef != null ? ef.toString() : "[]");
+            Object tg = c.get("tags");
+            tc.setTags(tg != null ? tg.toString() : "[]");
+            toSave.add(tc);
+        }
+        testcaseRepo.saveAll(toSave);
+        log.info("导入测试集 '{}'，{} 条用例", ts.getName(), toSave.size());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("testset", ts);
+        result.put("count", toSave.size());
+        return result;
     }
 }
