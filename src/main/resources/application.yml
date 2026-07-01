@@ -38,11 +38,6 @@ spring:
 pgvector:
   table: document_chunks
 
-# 前端路由模式：legacy | both | new
-rag:
-  frontend:
-    mode: new
-
 # 日志配置
 logging:
   level:
