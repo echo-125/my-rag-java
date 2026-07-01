@@ -112,6 +112,7 @@ const App = {
   chat: {
     messageMap: new Map(),
     selectedMessageId: null,
+    diagUserClosed: false,
 
     // ─── 工具名/图标映射 ───
     _toolNames: {
@@ -122,8 +123,28 @@ const App = {
       searchKnowledge: '🔍', readFile: '📄', listDirectory: '📁', getKnowledgeBaseStats: '📊'
     },
 
-    // ─── 欢迎 HTML ───
-    _welcomeHTML: `<div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in"><div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10"><svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div><h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2><p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p></div>`,
+    // ─── 就绪面板 HTML ───
+    _welcomeHTML: `<div id="chatWelcome" class="ready-panel animate-fade-in">
+  <div class="ready-header">
+    <div class="ready-icon">⚡</div>
+    <div>
+      <h2 class="ready-title">RAG 实验台就绪</h2>
+      <p class="ready-subtitle">本地知识增强问答工作台 · 检索增强生成</p>
+    </div>
+  </div>
+  <div class="ready-stats">
+    <div class="ready-stat"><span class="ready-stat-label">模型</span><span id="readyLlm" class="ready-stat-val">—</span></div>
+    <div class="ready-stat"><span class="ready-stat-label">知识库</span><span id="readyChunks" class="ready-stat-val">—</span></div>
+    <div class="ready-stat"><span class="ready-stat-label">项目</span><span id="readyProjects" class="ready-stat-val">—</span></div>
+    <div class="ready-stat"><span class="ready-stat-label">检索能力</span><span id="readyCapabilities" class="ready-cap-badges"><span class="cap-badge cap-off" id="capBM25">BM25</span><span class="cap-badge cap-off" id="capQR">QR</span><span class="cap-badge cap-off" id="capRerank">RERANK</span></span></div>
+  </div>
+  <div class="ready-actions">
+    <button class="ready-action-btn" onclick="App.chat.quickQuestion('知识库中有哪些项目？')"><span class="ready-action-icon">📊</span><span>查看知识库状态</span></button>
+    <button class="ready-action-btn" onclick="App.chat.quickQuestion('总结一下已入库的主要内容')"><span class="ready-action-icon">📋</span><span>总结已入库内容</span></button>
+    <button class="ready-action-btn" onclick="App.switchTab('ingestion')"><span class="ready-action-icon">📁</span><span>去入库新项目</span></button>
+    <button class="ready-action-btn" onclick="App.switchTab('settings')"><span class="ready-action-icon">⚙️</span><span>调整 RAG 配置</span></button>
+  </div>
+</div>`,
     _mermaidCounter: 0,
 
     // ─── 会话管理 ───
@@ -135,7 +156,7 @@ const App = {
         const list = document.getElementById('sessionList');
         if (!list) return;
         if (sessions.length === 0) {
-          list.innerHTML = '<div class="text-[11px] text-gray-400 px-2 py-2">暂无历史会话</div>';
+          list.innerHTML = '<div class="session-empty">暂无实验记录</div>';
           return;
         }
         list.innerHTML = sessions.map(s => {
@@ -172,7 +193,7 @@ const App = {
               status: 'completed', sources: [], toolMetadata: []
             });
             container.insertAdjacentHTML('beforeend', `
-              <div class="flex justify-end animate-slide-in mb-4">
+              <div class="flex justify-end animate-slide-in mb-3">
                 <div class="msg-user rounded-2xl px-5 py-3 max-w-[80%] shadow-sm">
                   <div class="text-sm leading-relaxed whitespace-pre-wrap">${App.utils.escHtml(msg.content)}</div>
                 </div>
@@ -215,6 +236,7 @@ const App = {
       App.state.currentSessionId = null;
       this.messageMap = new Map();
       this.selectedMessageId = null;
+      this.diagUserClosed = false;
       document.getElementById('chatContainer').innerHTML = this._welcomeHTML;
       this._resetDiagPanel();
       this._updateStatusSession();
@@ -233,6 +255,7 @@ const App = {
     _resetDiagPanel() {
       const el = document.getElementById('diagContent');
       if (el) el.innerHTML = '<div class="text-xs text-gray-400 text-center py-8">选中一条 AI 回复查看详情</div>';
+      if (!this.diagUserClosed) this._collapseDiagPanel();
     },
 
     // ─── 模型列表 ───
@@ -263,6 +286,15 @@ const App = {
 
     onModelChange() { this._updateStatusLlm(); },
 
+    quickQuestion(text) {
+      const input = document.getElementById('chatInput');
+      if (!input) return;
+      input.value = text;
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+      this.send();
+    },
+
     onKeydown(e) {
       if (e.key === 'Enter' && !e.shiftKey) {
         if (e.isComposing) return;
@@ -277,13 +309,14 @@ const App = {
       const query = input.value.trim();
       if (!query) return;
 
-      const modelKey = document.getElementById('modelSelect').value;
+      const modelSelect = document.getElementById('modelSelect');
+      const modelKey = modelSelect.value;
       if (!modelKey) return App.utils.toast('请先选择或配置模型', 'warning');
 
       input.value = '';
       input.style.height = 'auto';
 
-      const modelName = document.getElementById('modelSelect')?.selectedOptions[0]?.text || '';
+      const modelName = modelSelect?.selectedOptions[0]?.text || '';
       const container = document.getElementById('chatContainer');
       const scrollEl = document.getElementById('chatScrollArea');
 
@@ -299,7 +332,7 @@ const App = {
 
       // 渲染用户气泡
       container.insertAdjacentHTML('beforeend', `
-        <div class="flex justify-end animate-slide-in mb-4">
+        <div class="flex justify-end animate-slide-in mb-3">
           <div class="msg-user rounded-2xl px-5 py-3 max-w-[80%] shadow-sm">
             <div class="text-sm leading-relaxed whitespace-pre-wrap">${App.utils.escHtml(query)}</div>
           </div>
@@ -317,6 +350,11 @@ const App = {
         domId: 'ai-msg-' + aiMsgId
       };
       this.messageMap.set(aiMsgId, aiObj);
+      // 软上限：清理最早消息防止内存无限增长
+      if (this.messageMap.size > 200) {
+        const firstKey = this.messageMap.keys().next().value;
+        this.messageMap.delete(firstKey);
+      }
 
       // 渲染 AI 卡片（流式模式）
       this._renderAssistantCard(container, aiObj, true);
@@ -539,6 +577,8 @@ const App = {
         if (card) card.classList.add('selected');
       }
       this.selectedMessageId = msgId;
+      // 自动展开诊断栏（除非用户手动关闭过）
+      if (!this.diagUserClosed) this._expandDiagPanel();
       this.renderDiagPanel();
     },
 
@@ -638,8 +678,29 @@ const App = {
       const panel = document.getElementById('diagPanel');
       const btn = document.getElementById('diagToggleBtn');
       if (!panel) return;
-      panel.classList.toggle('hidden');
-      if (btn) btn.style.display = panel.classList.contains('hidden') ? '' : 'none';
+      const isCollapsed = panel.classList.contains('diag-collapsed');
+      if (isCollapsed) {
+        panel.classList.remove('diag-collapsed');
+        this.diagUserClosed = false;
+      } else {
+        panel.classList.add('diag-collapsed');
+        this.diagUserClosed = true;
+      }
+      if (btn) btn.style.display = panel.classList.contains('diag-collapsed') ? '' : 'none';
+    },
+
+    _expandDiagPanel() {
+      const panel = document.getElementById('diagPanel');
+      const btn = document.getElementById('diagToggleBtn');
+      if (panel) panel.classList.remove('diag-collapsed');
+      if (btn) btn.style.display = 'none';
+    },
+
+    _collapseDiagPanel() {
+      const panel = document.getElementById('diagPanel');
+      const btn = document.getElementById('diagToggleBtn');
+      if (panel) panel.classList.add('diag-collapsed');
+      if (btn) btn.style.display = '';
     },
 
     _initDiagDelegation() {
@@ -718,32 +779,61 @@ const App = {
     // ─── 状态条 ───
     async loadStatusBar() {
       // RAG 配置
+      let bm25On = false, qrOn = false, rerankOn = false;
       try {
         const resp = await App.utils.fetchWithRetry('/api/configs');
         const configs = await resp.json();
         const getVal = (key) => configs.find(c => c.key === key)?.value;
-        this._renderStatusBadge('statusBM25', 'BM25', getVal('enable_bm25') === 'true');
-        this._renderStatusBadge('statusRerank', 'RERANK', getVal('enable_reranking') === 'true');
-        this._renderStatusBadge('statusQR', 'QR', getVal('enable_query_rewrite') === 'true');
+        bm25On = getVal('enable_bm25') === 'true';
+        qrOn = getVal('enable_query_rewrite') === 'true';
+        rerankOn = getVal('enable_reranking') === 'true';
+        this._renderStatusBadge('statusBM25', 'BM25', bm25On);
+        this._renderStatusBadge('statusRerank', 'RERANK', rerankOn);
+        this._renderStatusBadge('statusQR', 'QR', qrOn);
       } catch {
         ['statusBM25', 'statusRerank', 'statusQR'].forEach(id => {
           const el = document.getElementById(id);
           if (el) { el.textContent = el.textContent.split(':')[0] + ': 未提供'; el.className = 'status-badge off'; }
         });
       }
+      // 就绪面板：检索能力 badge
+      this._renderCapBadge('capBM25', bm25On);
+      this._renderCapBadge('capQR', qrOn);
+      this._renderCapBadge('capRerank', rerankOn);
       // 知识库统计
+      let chunks = '—', projects = '—';
       try {
         const resp = await App.utils.fetchWithRetry('/api/dashboard/stats');
         const stats = await resp.json();
-        document.getElementById('statusChunks').textContent = stats.totalChunks ?? '—';
-        document.getElementById('statusProjects').textContent = stats.projectCount ?? '—';
+        chunks = stats.totalChunks ?? '—';
+        projects = stats.projectCount ?? '—';
+        document.getElementById('statusChunks').textContent = chunks;
+        document.getElementById('statusProjects').textContent = projects;
       } catch {
         document.getElementById('statusChunks').textContent = '—';
         document.getElementById('statusProjects').textContent = '—';
       }
+      // 就绪面板：统计值
+      const rChunks = document.getElementById('readyChunks');
+      const rProjects = document.getElementById('readyProjects');
+      if (rChunks) rChunks.textContent = /^\d+$/.test(chunks) ? chunks + ' chunks' : chunks;
+      if (rProjects) rProjects.textContent = projects;
       // Session ID
       const sessEl = document.getElementById('statusSession');
       if (sessEl) sessEl.textContent = App.state.currentSessionId ? App.state.currentSessionId.substring(0, 12) + '...' : '—';
+      // 就绪面板：模型名
+      const sel = document.getElementById('modelSelect');
+      const rLlm = document.getElementById('readyLlm');
+      if (sel && rLlm) {
+        const opt = sel.selectedOptions[0];
+        rLlm.textContent = opt ? opt.text : '未配置';
+      }
+    },
+
+    _renderCapBadge(id, on) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.className = 'cap-badge ' + (on ? 'cap-on' : 'cap-off');
     },
 
     _renderStatusBadge(id, label, on) {
@@ -2269,6 +2359,8 @@ const App = {
         this.style.height = 'auto';
         this.style.height = Math.min(this.scrollHeight, 200) + 'px';
         if (this.value.trim() === '') this.style.height = 'auto';
+        const counter = document.getElementById('inputCharCount');
+        if (counter) counter.textContent = this.value.length || '0';
       });
     }
 

@@ -70,13 +70,13 @@
 
       <!-- 顶部运行状态条 -->
       <div id="chatStatusBar" class="flex items-center gap-2 px-4 py-1.5 bg-gray-50 text-gray-600 text-[11px] border-b border-gray-200 flex-shrink-0 overflow-x-auto font-mono whitespace-nowrap select-none">
-        <span class="status-item"><span class="text-gray-400">LLM</span> <span id="statusLlm" class="text-gray-700 font-medium">加载中...</span></span>
+        <span class="status-item"><span class="status-label">LLM</span> <span id="statusLlm" class="status-val">加载中...</span></span>
         <span class="status-sep">│</span>
-        <span class="status-item"><span class="text-gray-400">SESSION</span> <span id="statusSession" class="text-gray-500">—</span></span>
+        <span class="status-item"><span class="status-label">SESSION</span> <span id="statusSession" class="status-val">—</span></span>
         <span class="status-sep">│</span>
-        <span class="status-item"><span class="text-gray-400">CHUNKS</span> <span id="statusChunks" class="text-gray-700">—</span></span>
+        <span class="status-item"><span class="status-label">CHUNKS</span> <span id="statusChunks" class="status-val">—</span></span>
         <span class="status-sep">│</span>
-        <span class="status-item"><span class="text-gray-400">PROJECTS</span> <span id="statusProjects" class="text-gray-700">—</span></span>
+        <span class="status-item"><span class="status-label">PROJECTS</span> <span id="statusProjects" class="status-val">—</span></span>
         <span class="status-sep">│</span>
         <span id="statusBM25" class="status-badge off">BM25: --</span>
         <span id="statusRerank" class="status-badge off">RERANK: --</span>
@@ -87,7 +87,7 @@
           </select>
           <button onclick="App.chat.newChat()" class="status-btn" title="新会话">+ 新会话</button>
           <button onclick="App.chat.clear()" class="status-btn status-btn-danger" title="清空对话">清空</button>
-          <button id="diagToggleBtn" onclick="App.chat.toggleDiag()" class="status-btn" title="诊断栏" style="display:none">诊断</button>
+          <button id="diagToggleBtn" onclick="App.chat.toggleDiag()" class="status-btn" title="诊断栏">诊断</button>
         </span>
       </div>
 
@@ -112,19 +112,33 @@
 
         <!-- 中央对话区 -->
         <div id="chatScrollArea" class="flex-1 overflow-y-auto scroll-smooth custom-scrollbar">
-          <div id="chatContainer" class="max-w-4xl mx-auto space-y-6 p-6">
-            <div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in">
-              <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10">
-                <svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+          <div id="chatContainer" class="max-w-4xl mx-auto space-y-4 p-4">
+            <div id="chatWelcome" class="ready-panel animate-fade-in">
+              <div class="ready-header">
+                <div class="ready-icon">⚡</div>
+                <div>
+                  <h2 class="ready-title">RAG 实验台就绪</h2>
+                  <p class="ready-subtitle">本地知识增强问答工作台 · 检索增强生成</p>
+                </div>
               </div>
-              <h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2>
-              <p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p>
+              <div class="ready-stats">
+                <div class="ready-stat"><span class="ready-stat-label">模型</span><span id="readyLlm" class="ready-stat-val">—</span></div>
+                <div class="ready-stat"><span class="ready-stat-label">知识库</span><span id="readyChunks" class="ready-stat-val">—</span></div>
+                <div class="ready-stat"><span class="ready-stat-label">项目</span><span id="readyProjects" class="ready-stat-val">—</span></div>
+                <div class="ready-stat"><span class="ready-stat-label">检索能力</span><span id="readyCapabilities" class="ready-cap-badges"><span class="cap-badge cap-off" id="capBM25">BM25</span><span class="cap-badge cap-off" id="capQR">QR</span><span class="cap-badge cap-off" id="capRerank">RERANK</span></span></div>
+              </div>
+              <div class="ready-actions">
+                <button class="ready-action-btn" onclick="App.chat.quickQuestion('知识库中有哪些项目？')"><span class="ready-action-icon">📊</span><span>查看知识库状态</span></button>
+                <button class="ready-action-btn" onclick="App.chat.quickQuestion('总结一下已入库的主要内容')"><span class="ready-action-icon">📋</span><span>总结已入库内容</span></button>
+                <button class="ready-action-btn" onclick="App.switchTab('ingestion')"><span class="ready-action-icon">📁</span><span>去入库新项目</span></button>
+                <button class="ready-action-btn" onclick="App.switchTab('settings')"><span class="ready-action-icon">⚙️</span><span>调整 RAG 配置</span></button>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- 右侧诊断栏 -->
-        <div id="diagPanel" class="w-80 bg-gray-50 border-l border-gray-200 flex flex-col flex-shrink-0 overflow-hidden">
+        <div id="diagPanel" class="w-80 bg-gray-50 border-l border-gray-200 flex flex-col flex-shrink-0 overflow-hidden diag-collapsed">
           <div class="p-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
             <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">诊断</span>
             <button onclick="App.chat.toggleDiag()" class="text-gray-400 hover:text-gray-600 p-0.5" title="收起诊断栏">
@@ -138,15 +152,20 @@
       </div>
 
       <!-- 底部输入区 -->
-      <div class="flex-shrink-0 border-t border-gray-200 bg-white px-4 py-3">
+      <div class="chat-input-area">
         <div class="max-w-4xl mx-auto">
-          <div class="relative bg-white border border-gray-200 shadow-sm rounded-xl focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/40 transition-all duration-200">
-            <textarea id="chatInput" rows="1" placeholder="输入你的问题... (Shift + Enter 换行)" class="w-full bg-transparent rounded-xl px-4 py-3 pr-12 resize-none focus:outline-none text-sm leading-relaxed max-h-[200px] overflow-y-auto custom-scrollbar" onkeydown="App.chat.onKeydown(event)"></textarea>
-            <button id="sendBtn" onclick="App.chat.send()" class="absolute right-2.5 bottom-2.5 h-7 w-7 bg-primary hover:bg-primary-hover text-white rounded-lg transition-all duration-200 flex items-center justify-center disabled:opacity-40 disabled:bg-gray-300 disabled:cursor-not-allowed">
+          <div class="chat-input-wrapper">
+            <span class="chat-input-prompt">&gt;</span>
+            <textarea id="chatInput" rows="1" placeholder="输入查询... (Enter 发送, Shift+Enter 换行)" class="chat-input-field" onkeydown="App.chat.onKeydown(event)"></textarea>
+            <button id="sendBtn" onclick="App.chat.send()" class="chat-send-btn">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/></svg>
+              <span class="send-label">执行</span>
             </button>
           </div>
-          <p class="text-[10px] text-gray-400 mt-1.5 text-center">AI 生成的内容可能不准确，请核实重要信息及引用来源。</p>
+          <div class="chat-input-footer">
+            <span>Enter 发送 · Shift+Enter 换行</span>
+            <span id="inputCharCount" class="char-count">0</span>
+          </div>
         </div>
       </div>
     </div>
