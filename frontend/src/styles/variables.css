@@ -1,0 +1,36 @@
+:root {
+  /* 主色 */
+  --c-primary: #10a37f;
+  --c-primary-hover: #0d8a6a;
+
+  /* 背景层级 */
+  --bg-page: #f3f4f6;
+  --bg-card: #ffffff;
+  --bg-elevated: #f9fafb;
+  --bg-terminal: #0d1117;
+
+  /* 文字层级 */
+  --text-1: #111827;
+  --text-2: #374151;
+  --text-3: #6b7280;
+  --text-4: #9ca3af;
+
+  /* 边框 */
+  --border: #e5e7eb;
+  --border-subtle: #f3f4f6;
+
+  /* 状态色 */
+  --status-success: #059669;
+  --status-error: #dc2626;
+  --status-warning: #d97706;
+  --status-info: #2563eb;
+
+  /* 字体 */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* 圆角 */
+  --radius-card: 12px;
+  --radius-btn: 8px;
+  --radius-badge: 3px;
+}
