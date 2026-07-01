@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { RagConfigItem, LlmConfig, EmbeddingConfig, RerankingConfig } from '@/types/settings'
 import { api } from '@/utils/api'
