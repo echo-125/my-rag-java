@@ -6,7 +6,6 @@ import { getRagConfigs } from '@/api/settings'
 import { getStats } from '@/api/dashboard'
 
 const store = useChatStore()
-const selectedModel = ref('')
 
 const bm25On = ref(false)
 const rerankOn = ref(false)
@@ -42,7 +41,7 @@ onMounted(async () => {
     style="background: var(--bg-elevated); border-color: var(--border); color: var(--text-3)">
     <span class="flex items-center gap-1">
       <span style="color: var(--text-2)">LLM</span>
-      <span style="color: var(--text-1)">{{ store.models.find(m => m.id === selectedModel)?.name || '加载中...' }}</span>
+      <span style="color: var(--text-1)">{{ store.models.find(m => m.id === store.selectedModelKey)?.name || '加载中...' }}</span>
     </span>
     <span style="color: var(--border)">│</span>
     <span class="flex items-center gap-1">
@@ -72,7 +71,7 @@ onMounted(async () => {
 
     <span class="ml-auto flex items-center gap-2 flex-shrink-0">
       <NSelect
-        v-model:value="selectedModel"
+        v-model:value="store.selectedModelKey"
         :options="store.models.map(m => ({ label: m.name, value: m.id }))"
         size="tiny"
         style="width: 160px"

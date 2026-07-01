@@ -5,5 +5,7 @@ import ToastContainer from './components/ui/ToastContainer.vue'
 
 <template>
   <AppShell />
-  <ToastContainer />
+  <Teleport to="body">
+    <ToastContainer />
+  </Teleport>
 </template>

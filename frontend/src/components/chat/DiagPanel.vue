@@ -2,13 +2,14 @@
 import { computed } from 'vue'
 import { useChatStore, type ChatMessage } from '@/stores/chat'
 import { useDiagnostics } from '@/composables/useDiagnostics'
+import { TOOL_NAMES, TOOL_ICONS } from '@/utils/constants'
 
 const store = useChatStore()
-const { getConclusions, getToolName, getToolIcon, copyText } = useDiagnostics()
+const { selectedMessageId, getConclusions, copyText } = useDiagnostics()
 
 const selectedMessage = computed<ChatMessage | null>(() => {
-  if (!store.selectedMessageId) return null
-  return store.messages.get(store.selectedMessageId) || null
+  if (!selectedMessageId.value) return null
+  return store.messages.get(selectedMessageId.value) || null
 })
 </script>
 
@@ -61,7 +62,7 @@ const selectedMessage = computed<ChatMessage | null>(() => {
         <div class="text-[10px] font-semibold uppercase tracking-wider mb-1.5 pb-1" style="color: var(--text-3); border-bottom: 1px solid var(--border)">工具调用流水</div>
         <div v-if="selectedMessage.toolMetadata.length === 0" class="text-[11px] italic" style="color: var(--text-4)">无工具调用</div>
         <div v-for="(t, i) in selectedMessage.toolMetadata" :key="i" class="flex justify-between items-center py-0.5 text-[11px]">
-          <span>{{ getToolIcon(t.tool) }} {{ getToolName(t.tool) }}</span>
+          <span>{{ TOOL_ICONS[t.tool] || '⚙️' }} {{ TOOL_NAMES[t.tool] || t.tool }}</span>
           <span class="font-mono" style="color: var(--text-3)">{{ t.duration }}ms</span>
         </div>
       </div>

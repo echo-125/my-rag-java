@@ -1,16 +1,16 @@
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { TOOL_NAMES, TOOL_ICONS } from '@/utils/constants'
 import { copyToClipboard } from '@/utils/dom'
 import type { ChatMessage } from '@/stores/chat'
 
-export function useDiagnostics() {
-  const selectedMessageId = ref<string | null>(null)
-  const diagExpanded = ref(true)
-  const userClosedDiag = ref(false)
+// 模块级共享状态 — 所有调用者共享同一份
+const selectedMessageId = ref<string | null>(null)
+const diagExpanded = ref(true)
+const userClosedDiag = ref(false)
 
+export function useDiagnostics() {
   function selectMessage(id: string | null) {
     selectedMessageId.value = id
-    // 自动展开诊断栏（除非用户手动关闭过）
     if (!userClosedDiag.value && id) {
       diagExpanded.value = true
     }
@@ -32,7 +32,6 @@ export function useDiagnostics() {
     userClosedDiag.value = true
   }
 
-  /** 生成诊断结论列表 */
   function getConclusions(msg: ChatMessage): string[] {
     const conclusions: string[] = []
     if (msg.status === 'streaming') {
@@ -53,21 +52,6 @@ export function useDiagnostics() {
     return conclusions
   }
 
-  /** 获取工具名称（中文） */
-  function getToolName(tool: string): string {
-    return TOOL_NAMES[tool] || tool
-  }
-
-  /** 获取工具图标 */
-  function getToolIcon(tool: string): string {
-    return TOOL_ICONS[tool] || '⚙️'
-  }
-
-  /** 复制操作 */
-  async function copyText(text: string) {
-    await copyToClipboard(text)
-  }
-
   return {
     selectedMessageId,
     diagExpanded,
@@ -76,8 +60,6 @@ export function useDiagnostics() {
     expandDiag,
     collapseDiag,
     getConclusions,
-    getToolName,
-    getToolIcon,
-    copyText,
+    copyText: copyToClipboard,
   }
 }

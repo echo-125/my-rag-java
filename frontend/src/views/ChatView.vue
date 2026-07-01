@@ -16,7 +16,6 @@ const { selectedMessageId, diagExpanded, selectMessage, toggleDiag, expandDiag, 
 const inputText = ref('')
 const chatContainerRef = ref<HTMLDivElement>()
 const chatScrollRef = ref<HTMLDivElement>()
-const selectedModel = ref('')
 const sessionColCollapsed = ref(false)
 
 const {
@@ -30,7 +29,7 @@ const currentAiId = ref<string | null>(null)
 async function handleSend() {
   const query = inputText.value.trim()
   if (!query) return
-  if (!selectedModel.value) {
+  if (!store.selectedModelKey) {
     window.alert('请先选择或配置模型')
     return
   }
@@ -69,14 +68,14 @@ async function handleSend() {
     toolMetadata: [],
     duration: null,
     query,
-    modelName: store.models.find(m => m.id === selectedModel.value)?.name || '',
+    modelName: store.models.find(m => m.id === store.selectedModelKey)?.name || '',
   })
 
   selectMessage(aiMsgId)
   await nextTick()
   scrollToBottom()
 
-  await send(query, selectedModel.value, store.currentSessionId)
+  await send(query, store.selectedModelKey, store.currentSessionId)
 
   // 流式结束后更新消息状态
   store.updateMessage(aiMsgId, {

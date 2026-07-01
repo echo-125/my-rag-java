@@ -4,6 +4,7 @@ import { useStreamChat } from '@/composables/useStreamChat'
 import { renderMarkdown } from '@/composables/useMarkdown'
 import { renderMermaidInContainer } from '@/composables/useMermaid'
 import { useDiagnostics } from '@/composables/useDiagnostics'
+import { TOOL_NAMES, TOOL_ICONS } from '@/utils/constants'
 import type { ChatMessage } from '@/stores/chat'
 
 const query = ref('')
@@ -18,7 +19,7 @@ const {
 
 const {
   selectedMessageId, diagExpanded, selectMessage, toggleDiag,
-  getConclusions, getToolName, getToolIcon, copyText,
+  getConclusions, copyText,
 } = useDiagnostics()
 
 // 模拟消息对象（用于诊断面板）
@@ -150,7 +151,7 @@ watch(logs, async () => {
           <div v-if="toolMetadata.length > 0" class="rounded-xl p-4" style="background: var(--bg-card); border: 1px solid var(--border)">
             <h3 class="text-sm font-semibold mb-2" style="color: var(--text-1)">工具调用 ({{ toolMetadata.length }})</h3>
             <div v-for="(t, i) in toolMetadata" :key="i" class="text-xs py-1 flex gap-2" style="color: var(--text-3)">
-              <span>{{ getToolIcon(t.tool) }} {{ getToolName(t.tool) }}</span>
+              <span>{{ TOOL_ICONS[t.tool] || '⚙️' }} {{ TOOL_NAMES[t.tool] || t.tool }}</span>
               <span style="color: var(--text-4); font-family: var(--font-mono)">{{ t.duration }}ms</span>
               <span style="color: var(--text-4)">{{ t.args }}</span>
             </div>

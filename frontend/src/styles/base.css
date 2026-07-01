@@ -15,9 +15,7 @@ body {
 }
 
 #app {
-  height: 100vh;
-  display: flex;
-  overflow: hidden;
+  /* 布局由 index.html 内联样式控制，此处仅做补充 */
 }
 
 /* 全局动画 */

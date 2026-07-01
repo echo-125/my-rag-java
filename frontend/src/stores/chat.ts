@@ -24,6 +24,7 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<Map<string, ChatMessage>>(new Map())
   const selectedMessageId = ref<string | null>(null)
   const models = ref<ModelConfig[]>([])
+  const selectedModelKey = ref('')
   const sessions = ref<Session[]>([])
   const isStreaming = ref(false)
 
@@ -100,7 +101,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return {
-    currentSessionId, messages, selectedMessageId, models, sessions, isStreaming,
+    currentSessionId, messages, selectedMessageId, models, selectedModelKey, sessions, isStreaming,
     messageList, currentMessages,
     addMessage, updateMessage, selectMessage, resetChat,
     loadSessions, switchSession, deleteSession, loadModels,
