@@ -35,3 +35,9 @@ logs/
 ### 数据库导出（敏感数据，不入库）###
 config-tables-export.sql
 export-config-tables.js
+
+.playwright-cli/
+.playwright-mcp/
+
+
+docs/
