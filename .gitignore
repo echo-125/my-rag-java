@@ -39,6 +39,9 @@ node_modules/
 package-lock.json
 frontend/dist/
 
+### 前端备份（不入库）###
+src/main/resources/static.zip
+
 ### Mimocode ###
 .mimocode/
 
