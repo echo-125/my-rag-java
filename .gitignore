@@ -37,6 +37,7 @@ test-results/
 ### Node ###
 node_modules/
 package-lock.json
+frontend/dist/
 
 ### Mimocode ###
 .mimocode/
