@@ -53,6 +53,24 @@ const App = {
         return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
       });
     },
+    copyToClipboard(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(
+          () => App.utils.toast('已复制', 'info', 1500),
+          () => App.utils._fallbackCopy(text)
+        );
+      } else { App.utils._fallbackCopy(text); }
+    },
+    _fallbackCopy(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); App.utils.toast('已复制', 'info', 1500); }
+      catch { App.utils.toast('复制失败', 'error'); }
+      ta.remove();
+    },
     showLoading(text) {
       const overlay = document.getElementById('loadingOverlay');
       const textEl = document.getElementById('loadingText');
@@ -66,7 +84,7 @@ const App = {
   },
 
   switchTab(tabName) {
-    ['chat', 'dashboard', 'ingestion', 'settings'].forEach(id => {
+    ['chat', 'dashboard', 'ingestion', 'settings', 'evaluation'].forEach(id => {
       document.getElementById('tab-' + id)?.classList.add('hidden');
     });
     const target = document.getElementById('tab-' + tabName);
@@ -84,7 +102,7 @@ const App = {
     });
     App.state.currentTab = tabName;
     if (tabName === 'dashboard') App.dashboard.refresh();
-    if (tabName === 'chat') { App.chat.loadModelList(); App.chat.loadSessions(); }
+    if (tabName === 'chat') { App.chat.loadModelList(); App.chat.loadSessions(); App.chat.loadStatusBar(); App.chat._updateStatusSession(); }
     if (tabName === 'ingestion') App.ingestion.loadProjects();
     if (tabName === 'settings') { App.settings.rag.load(); App.settings.llm.load(); App.settings.embed.load(); App.settings.rerank.load(); }
     if (tabName === 'evaluation') App.evaluation.init();
@@ -92,6 +110,22 @@ const App = {
 
   // ==================== 对话功能 ====================
   chat: {
+    messageMap: new Map(),
+    selectedMessageId: null,
+
+    // ─── 工具名/图标映射 ───
+    _toolNames: {
+      searchKnowledge: '搜索知识库', readFile: '读取文件',
+      listDirectory: '浏览目录', getKnowledgeBaseStats: '获取统计'
+    },
+    _toolIcons: {
+      searchKnowledge: '🔍', readFile: '📄', listDirectory: '📁', getKnowledgeBaseStats: '📊'
+    },
+
+    // ─── 欢迎 HTML ───
+    _welcomeHTML: `<div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in"><div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10"><svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div><h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2><p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p></div>`,
+    _mermaidCounter: 0,
+
     // ─── 会话管理 ───
     async loadSessions() {
       try {
@@ -107,80 +141,100 @@ const App = {
         list.innerHTML = sessions.map(s => {
           const isActive = s.id === App.state.currentSessionId;
           const time = new Date(s.updatedAt).toLocaleString('zh-CN', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
-          return `<div class="session-item group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors ${isActive ? 'bg-primary/10 text-primary' : 'hover:bg-gray-100 text-gray-600'}" onclick="App.chat.switchSession('${s.id}')" title="${App.utils.escHtml(s.title)}">
-            <svg class="w-3.5 h-3.5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-            <span class="flex-1 truncate sidebar-label opacity-0 w-0 transition-all duration-300">${App.utils.escHtml(s.title)}</span>
-            <span class="sidebar-label text-[10px] text-gray-400 opacity-0 w-0 transition-all duration-300 flex-shrink-0">${time}</span>
-            <button onclick="event.stopPropagation();App.chat.deleteSession('${s.id}')" class="sidebar-label opacity-0 w-0 transition-all duration-300 flex-shrink-0 text-gray-400 hover:text-red-500 p-0.5 rounded hover:bg-red-50" title="删除">
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            </button>
+          return `<div class="session-item ${isActive ? 'active' : ''}" onclick="App.chat.switchSession('${s.id}')" title="${App.utils.escHtml(s.title)}">
+            <div class="session-title">${App.utils.escHtml(s.title)}</div>
+            <div class="session-meta">
+              <span class="session-time">${time}</span>
+              <button onclick="event.stopPropagation();App.chat.deleteSession('${s.id}')" class="session-del" title="删除">✕</button>
+            </div>
           </div>`;
         }).join('');
       } catch (e) { console.warn('加载会话列表失败', e); }
     },
+
     async switchSession(sessionId) {
       App.state.currentSessionId = sessionId;
+      this._updateStatusSession();
+      this.messageMap = new Map();
+      this.selectedMessageId = null;
       const container = document.getElementById('chatContainer');
       container.innerHTML = '';
-      document.getElementById('chatWelcome')?.remove();
       try {
         const resp = await App.utils.fetchWithRetry(`/api/sessions/${sessionId}/messages`);
         if (!resp.ok) throw new Error('加载失败');
         const messages = await resp.json();
         for (const msg of messages) {
           if (msg.role === 'user') {
+            const msgId = msg.id || App.utils.genId();
+            this.messageMap.set(msgId, {
+              id: msgId, role: 'user', content: msg.content,
+              createdAt: new Date(msg.createdAt), sessionId,
+              status: 'completed', sources: [], toolMetadata: []
+            });
             container.insertAdjacentHTML('beforeend', `
-              <div class="flex justify-end animate-slide-in mb-6">
-                <div class="msg-user rounded-2xl px-5 py-3.5 max-w-[80%] shadow-sm">
-                  <div class="text-[15px] leading-relaxed whitespace-pre-wrap">${App.utils.escHtml(msg.content)}</div>
+              <div class="flex justify-end animate-slide-in mb-4">
+                <div class="msg-user rounded-2xl px-5 py-3 max-w-[80%] shadow-sm">
+                  <div class="text-sm leading-relaxed whitespace-pre-wrap">${App.utils.escHtml(msg.content)}</div>
                 </div>
               </div>`);
           } else if (msg.role === 'assistant') {
-            const wrapperId = 'ai-msg-' + App.utils.genId();
-            container.insertAdjacentHTML('beforeend', `
-              <div id="${wrapperId}" class="flex justify-start animate-fade-in mb-8">
-                <div class="flex gap-4 w-full">
-                  <div class="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-white flex-shrink-0 mt-1 shadow-md shadow-primary/20">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                  </div>
-                  <div class="msg-ai flex-1 max-w-[calc(100%-3rem)]">
-                    <div class="text-sm font-semibold text-gray-800 mb-1">智能助手</div>
-                    <div class="ai-response prose prose-sm w-full"></div>
-                  </div>
-                </div>
-              </div>`);
-            const responseDiv = document.querySelector(`#${wrapperId} .ai-response`);
-            responseDiv.innerHTML = marked.parse(msg.content);
-            responseDiv.querySelectorAll('pre code').forEach(block => {
-              if (!block.classList.contains('language-mermaid') && window.hljs) hljs.highlightElement(block);
-            });
+            const msgId = msg.id || App.utils.genId();
+            const domId = 'ai-msg-' + msgId;
+            const obj = {
+              id: msgId, role: 'assistant', content: msg.content,
+              createdAt: new Date(msg.createdAt), sessionId,
+              status: 'completed', sources: [], toolMetadata: [],
+              domId, query: '', duration: null
+            };
+            this.messageMap.set(msgId, obj);
+            this._renderAssistantCard(container, obj, false);
           }
         }
-        const messagesEl = document.getElementById('chatMessages');
-        messagesEl.scrollTo({ top: messagesEl.scrollHeight });
+        const scrollEl = document.getElementById('chatScrollArea');
+        scrollEl.scrollTo({ top: scrollEl.scrollHeight });
+        this._updateStatusSession();
         this.loadSessions();
       } catch (e) {
         App.utils.toast('加载会话失败: ' + e.message, 'error');
       }
     },
+
     async deleteSession(sessionId) {
       if (!confirm('确定删除此会话？')) return;
       try {
         await App.utils.fetchWithRetry(`/api/sessions/${sessionId}`, { method: 'DELETE' });
         if (App.state.currentSessionId === sessionId) {
-          App.state.currentSessionId = null;
-          App.chat.clear();
+          this._resetChat();
         }
         this.loadSessions();
         App.utils.toast('会话已删除', 'info', 2000);
       } catch (e) { App.utils.toast('删除失败', 'error'); }
     },
-    newChat() {
+
+    _resetChat() {
       App.state.currentSessionId = null;
-      const container = document.getElementById('chatContainer');
-      container.innerHTML = `<div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in"><div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10"><svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div><h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2><p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p></div>`;
+      this.messageMap = new Map();
+      this.selectedMessageId = null;
+      document.getElementById('chatContainer').innerHTML = this._welcomeHTML;
+      this._resetDiagPanel();
+      this._updateStatusSession();
       this.loadSessions();
     },
+
+    newChat() {
+      this._resetChat();
+    },
+
+    clear() {
+      this._resetChat();
+      App.utils.toast('对话已清空', 'info', 2000);
+    },
+
+    _resetDiagPanel() {
+      const el = document.getElementById('diagContent');
+      if (el) el.innerHTML = '<div class="text-xs text-gray-400 text-center py-8">选中一条 AI 回复查看详情</div>';
+    },
+
     // ─── 模型列表 ───
     async loadModelList() {
       try {
@@ -192,10 +246,23 @@ const App = {
           select.innerHTML = models.length > 0
             ? models.map(m => `<option value="${m.id}">${App.utils.escHtml(m.name)}</option>`).join('')
             : '<option value="">请先配置模型</option>';
+          // 同步状态条模型名
+          this._updateStatusLlm();
         }
       } catch (e) { document.getElementById('modelSelect').innerHTML = '<option value="">加载失败</option>'; }
     },
-    onModelChange() {},
+
+    _updateStatusLlm() {
+      const sel = document.getElementById('modelSelect');
+      const el = document.getElementById('statusLlm');
+      if (sel && el) {
+        const opt = sel.selectedOptions[0];
+        el.textContent = opt ? opt.text : '未配置';
+      }
+    },
+
+    onModelChange() { this._updateStatusLlm(); },
+
     onKeydown(e) {
       if (e.key === 'Enter' && !e.shiftKey) {
         if (e.isComposing) return;
@@ -203,52 +270,62 @@ const App = {
         App.chat.send();
       }
     },
+
+    // ─── 发送消息 ───
     async send() {
       const input = document.getElementById('chatInput');
       const query = input.value.trim();
       if (!query) return;
+
+      const modelKey = document.getElementById('modelSelect').value;
+      if (!modelKey) return App.utils.toast('请先选择或配置模型', 'warning');
+
       input.value = '';
       input.style.height = 'auto';
 
-      const modelKey = document.getElementById('modelSelect').value;
+      const modelName = document.getElementById('modelSelect')?.selectedOptions[0]?.text || '';
       const container = document.getElementById('chatContainer');
-      const messagesEl = document.getElementById('chatMessages');
+      const scrollEl = document.getElementById('chatScrollArea');
 
       document.getElementById('chatWelcome')?.remove();
 
-      // 用户气泡
-      container.insertAdjacentHTML('beforeend', `
-        <div class="flex justify-end animate-slide-in mb-6">
-          <div class="msg-user rounded-2xl px-5 py-3.5 max-w-[80%] shadow-sm">
-            <div class="text-[15px] leading-relaxed whitespace-pre-wrap">${App.utils.escHtml(query)}</div>
-          </div>
-        </div>
-      `);
+      // 创建用户消息对象
+      const userMsgId = App.utils.genId();
+      this.messageMap.set(userMsgId, {
+        id: userMsgId, role: 'user', content: query,
+        createdAt: new Date(), sessionId: App.state.currentSessionId,
+        status: 'completed', sources: [], toolMetadata: []
+      });
 
-      // AI 气泡结构 (预留 citations-container)
-      const wrapperId = 'ai-msg-' + App.utils.genId();
+      // 渲染用户气泡
       container.insertAdjacentHTML('beforeend', `
-        <div id="${wrapperId}" class="flex justify-start animate-fade-in mb-8">
-          <div class="flex gap-4 w-full">
-            <div class="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-white flex-shrink-0 mt-1 shadow-md shadow-primary/20">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-            </div>
-            <div class="msg-ai flex-1 max-w-[calc(100%-3rem)]">
-              <div class="text-sm font-semibold text-gray-800 mb-1">智能助手</div>
-              <div class="ai-response prose prose-sm w-full"><p class="text-gray-400 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-primary animate-ping"></span>思考并检索中...</p></div>
-              <div class="citations-container citations-panel hidden"></div>
-            </div>
+        <div class="flex justify-end animate-slide-in mb-4">
+          <div class="msg-user rounded-2xl px-5 py-3 max-w-[80%] shadow-sm">
+            <div class="text-sm leading-relaxed whitespace-pre-wrap">${App.utils.escHtml(query)}</div>
           </div>
-        </div>
-      `);
-      
-      const responseDiv = document.querySelector(`#${wrapperId} .ai-response`);
-      const citationsDiv = document.querySelector(`#${wrapperId} .citations-container`);
-      messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+        </div>`);
+
+      // 创建 AI 消息对象
+      App.state.currentSessionId = App.state.currentSessionId || App.utils.genId();
+      this._updateStatusSession();
+      const aiMsgId = App.utils.genId();
+      const aiObj = {
+        id: aiMsgId, role: 'assistant', content: '', query,
+        createdAt: new Date(), modelName, sessionId: App.state.currentSessionId,
+        status: 'streaming', sources: [], toolMetadata: [],
+        startTime: Date.now(), endTime: null, duration: null,
+        domId: 'ai-msg-' + aiMsgId
+      };
+      this.messageMap.set(aiMsgId, aiObj);
+
+      // 渲染 AI 卡片（流式模式）
+      this._renderAssistantCard(container, aiObj, true);
+
+      const responseDiv = document.querySelector(`#${aiObj.domId} .ai-response`);
+      scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: 'smooth' });
 
       document.getElementById('sendBtn').disabled = true;
-      App.state.currentSessionId = App.state.currentSessionId || App.utils.genId();
-      App.state.currentSources = []; // 清空本次溯源
+      App.state.currentSources = [];
 
       let fullText = '';
       try {
@@ -272,148 +349,414 @@ const App = {
             const t = line.trim();
             if (t.startsWith('data:') && t.length > 6) {
               try {
-                // 假设后端传递 json：{ "text": "...", "sources": [{"id": 1, "name": "doc.md"}] }
-                // 或者直接传文本，这里做个兼容处理
                 const payload = JSON.parse(t.substring(5));
-                if(payload.text) fullText += payload.text;
-                if(payload.sources && payload.sources.length > 0) {
-                   App.state.currentSources = payload.sources;
-                   App.chat.renderCitations(citationsDiv, App.state.currentSources);
+                if (payload.text) fullText += payload.text;
+                if (payload.sources && payload.sources.length > 0) {
+                  aiObj.sources = payload.sources;
+                  App.state.currentSources = payload.sources;
+                  this._renderCardCitations(aiObj);
                 }
-                if(payload.toolMetadata && payload.toolMetadata.length > 0) {
-                   App.chat.renderToolIndicator(responseDiv, payload.toolMetadata);
+                if (payload.toolMetadata && payload.toolMetadata.length > 0) {
+                  aiObj.toolMetadata.push(...payload.toolMetadata);
+                  this._renderCardTools(aiObj);
                 }
-                App.chat.scheduleRender(responseDiv, fullText);
+                this.scheduleRender(responseDiv, fullText);
               } catch (e) {
-                // 回退为纯文本流式
                 fullText += t.substring(5).replace(/^"|"$/g, '').replace(/\\n/g, '\n');
-                App.chat.scheduleRender(responseDiv, fullText);
+                this.scheduleRender(responseDiv, fullText);
               }
-              messagesEl.scrollTo({ top: messagesEl.scrollHeight });
+              scrollEl.scrollTo({ top: scrollEl.scrollHeight });
             }
           }
         }
+        aiObj.content = fullText;
+        aiObj.status = 'completed';
       } catch (e) {
-        responseDiv.innerHTML = `<p class="text-red-500 text-sm">✕ ${App.utils.escHtml(e.message)}</p>`;
-      } finally {
-        document.getElementById('sendBtn').disabled = false;
-        // 追加 👍👎 反馈按钮（存 data 属性避免 XSS）
-        if (fullText && !responseDiv.querySelector('.feedback-bar')) {
-          const bar = document.createElement('div');
-          bar.className = 'feedback-bar flex items-center gap-2 mt-3 pt-3 border-t border-gray-100';
-          bar.dataset.query = query;
-          bar.dataset.answer = fullText.substring(0, 500);
-          bar.innerHTML = `
-            <span class="text-xs text-gray-400">这个回答有帮助吗？</span>
-            <button onclick="App.chat.feedback(this, 1)" class="px-2 py-1 text-xs rounded hover:bg-green-50 text-gray-400 hover:text-green-600 transition-colors border border-transparent hover:border-green-200">👍</button>
-            <button onclick="App.chat.feedback(this, -1)" class="px-2 py-1 text-xs rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors border border-transparent hover:border-red-200">👎</button>
-          `;
-          responseDiv.appendChild(bar);
+        aiObj.status = 'error';
+        aiObj.content = fullText || '';
+        // 保留已渲染的部分内容，在下方追加错误提示
+        if (fullText) {
+          responseDiv.insertAdjacentHTML('beforeend', `<p class="text-red-500 text-sm mt-2 border-t border-red-100 pt-2">✕ ${App.utils.escHtml(e.message)}</p>`);
+        } else {
+          responseDiv.innerHTML = `<p class="text-red-500 text-sm">✕ ${App.utils.escHtml(e.message)}</p>`;
         }
-        messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+      } finally {
+        aiObj.endTime = Date.now();
+        aiObj.duration = aiObj.startTime ? aiObj.endTime - aiObj.startTime : null;
+        document.getElementById('sendBtn').disabled = false;
+        // 渲染元信息条
+        this._renderCardMeta(aiObj);
+        // 渲染反馈栏
+        this._renderCardFeedback(aiObj, query, fullText);
+        // 自动选中最新消息
+        this.selectMessage(aiMsgId);
+        scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: 'smooth' });
         this.loadSessions();
       }
     },
+
+    // ─── 结构化卡片渲染 ───
+    _renderAssistantCard(container, obj, streaming) {
+      const loadingHtml = streaming
+        ? '<p class="text-gray-400 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-primary animate-ping"></span>思考并检索中...</p>'
+        : '';
+      container.insertAdjacentHTML('beforeend', `
+        <div id="${obj.domId}" class="ai-card" data-msg-id="${obj.id}" onclick="App.chat.selectMessage('${obj.id}')">
+          <div class="ai-section ai-tools collapsed" onclick="event.stopPropagation()">
+            <div class="ai-section-hd" onclick="this.parentElement.classList.toggle('collapsed')">
+              <span>🔧 工具调用 (<span class="tool-count">0</span>)</span>
+              <svg class="chevron w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </div>
+            <div class="ai-section-bd"></div>
+          </div>
+          <div class="ai-response prose prose-sm w-full">${loadingHtml}</div>
+          <div class="ai-meta-bar"></div>
+          <div class="ai-section ai-cite" onclick="event.stopPropagation()">
+            <div class="ai-section-hd" onclick="this.parentElement.classList.toggle('collapsed')">
+              <span>📎 引用来源 (<span class="cite-count">0</span>)</span>
+              <svg class="chevron w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </div>
+            <div class="ai-section-bd"></div>
+          </div>
+          <div class="feedback-slot"></div>
+        </div>`);
+
+      // 如果是历史消息（非流式），直接渲染内容
+      if (!streaming && obj.content) {
+        const responseDiv = document.querySelector(`#${obj.domId} .ai-response`);
+        responseDiv.innerHTML = marked.parse(obj.content);
+        responseDiv.querySelectorAll('pre code').forEach(block => {
+          if (!block.classList.contains('language-mermaid') && window.hljs) hljs.highlightElement(block);
+        });
+        this.renderMermaid(responseDiv);
+        // 渲染历史消息的元信息条（无耗时）
+        this._renderCardMeta(obj);
+      }
+    },
+
+    _renderCardTools(obj) {
+      const card = document.getElementById(obj.domId);
+      if (!card) return;
+      const section = card.querySelector('.ai-tools');
+      const bd = section.querySelector('.ai-section-bd');
+      const count = card.querySelector('.tool-count');
+      count.textContent = obj.toolMetadata.length;
+      bd.innerHTML = obj.toolMetadata.map(t => {
+        const icon = this._toolIcons[t.tool] || '⚙️';
+        const name = this._toolNames[t.tool] || t.tool;
+        return `<div class="tool-item"><span>${icon}</span><span class="tool-name">${name}</span><span class="tool-dur">${t.duration}ms</span></div>`;
+      }).join('');
+      if (obj.toolMetadata.length > 0) section.classList.remove('collapsed');
+    },
+
+    _renderCardCitations(obj) {
+      const card = document.getElementById(obj.domId);
+      if (!card) return;
+      const section = card.querySelector('.ai-cite');
+      const bd = section.querySelector('.ai-section-bd');
+      const count = card.querySelector('.cite-count');
+      count.textContent = obj.sources.length;
+      bd.innerHTML = obj.sources.map((s, i) => `
+        <div class="cite-item" title="${App.utils.escHtml(s.path || s.name)}">
+          <span class="cite-idx">[${i + 1}]</span>
+          <div class="cite-info">
+            <span class="cite-name">${App.utils.escHtml(s.name)}</span>
+            ${s.path ? '<span class="cite-path">' + App.utils.escHtml(s.path) + '</span>' : ''}
+          </div>
+        </div>`).join('');
+    },
+
+    _renderCardMeta(obj) {
+      const card = document.getElementById(obj.domId);
+      if (!card) return;
+      const bar = card.querySelector('.ai-meta-bar');
+      const badges = [];
+      if (obj.sources.length > 0) badges.push(`<span class="meta-badge meta-cite">📎 引用 ${obj.sources.length}</span>`);
+      if (obj.toolMetadata.length > 0) badges.push(`<span class="meta-badge meta-tool">🔧 工具 ${obj.toolMetadata.length}</span>`);
+      if (obj.duration != null) badges.push(`<span class="meta-badge meta-dur">⏱ ${(obj.duration / 1000).toFixed(1)}s</span>`);
+      if (obj.status === 'completed') badges.push('<span class="meta-badge meta-ok">✓ 完成</span>');
+      else if (obj.status === 'error') badges.push('<span class="meta-badge meta-err">✕ 异常</span>');
+      else if (obj.status === 'streaming') badges.push('<span class="meta-badge meta-stream">● 流式中</span>');
+      bar.innerHTML = badges.join('');
+    },
+
+    _renderCardFeedback(obj, query, answer) {
+      const card = document.getElementById(obj.domId);
+      if (!card || !answer) return;
+      const slot = card.querySelector('.feedback-slot');
+      if (slot.querySelector('.feedback-bar')) return;
+      const bar = document.createElement('div');
+      bar.className = 'feedback-bar flex items-center gap-2 mt-2 pt-2 border-t border-gray-100';
+      bar.dataset.query = query;
+      bar.dataset.answer = answer.substring(0, 500);
+      bar.innerHTML = `
+        <span class="text-[11px] text-gray-400">有帮助？</span>
+        <button onclick="App.chat.feedback(this, 1)" class="px-1.5 py-0.5 text-xs rounded hover:bg-green-50 text-gray-400 hover:text-green-600 transition-colors">👍</button>
+        <button onclick="App.chat.feedback(this, -1)" class="px-1.5 py-0.5 text-xs rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors">👎</button>`;
+      slot.appendChild(bar);
+    },
+
+    // ─── scheduleRender（仅操作 .ai-response） ───
     scheduleRender(responseDiv, text) {
       App.state.pendingText = text;
       if (App.state.renderScheduled) return;
       App.state.renderScheduled = true;
       requestAnimationFrame(() => {
-        if (responseDiv) {
-          // 保留反馈按钮和工具指示器（Markdown 渲染会清空 innerHTML）
-          const existingBar = responseDiv.querySelector('.feedback-bar');
-          const existingTool = responseDiv.parentNode.querySelector('.tool-indicator');
-          responseDiv.innerHTML = marked.parse(App.state.pendingText);
-          App.chat.renderMermaid(responseDiv);
-          responseDiv.querySelectorAll('pre code').forEach((block) => {
-            if (!block.classList.contains('language-mermaid') && window.hljs) hljs.highlightElement(block);
-          });
-          if (existingBar) responseDiv.appendChild(existingBar);
-          if (existingTool) responseDiv.parentNode.insertBefore(existingTool, responseDiv);
+        try {
+          if (responseDiv) {
+            responseDiv.innerHTML = marked.parse(App.state.pendingText);
+            App.chat.renderMermaid(responseDiv);
+            responseDiv.querySelectorAll('pre code').forEach(block => {
+              if (!block.classList.contains('language-mermaid') && window.hljs) hljs.highlightElement(block);
+            });
+          }
+        } catch (e) {
+          console.warn('Markdown 渲染异常:', e);
         }
         App.state.renderScheduled = false;
       });
     },
+
     renderMermaid(container) {
       container.querySelectorAll('pre code.language-mermaid').forEach((block, idx) => {
         const code = block.textContent.trim();
         if (!code) return;
         const wrapper = document.createElement('div');
         wrapper.className = 'my-4 flex justify-center mermaid-wrapper';
-        wrapper.setAttribute('data-code', code);
-        const id = 'mmd-' + Date.now() + '-' + idx;
+        const id = 'mmd-' + (++this._mermaidCounter);
         wrapper.id = id;
         block.parentNode.replaceWith(wrapper);
         if (window.mermaid) mermaid.render(id, code).then(({ svg }) => { wrapper.innerHTML = svg; }).catch(() => wrapper.innerHTML = '<div class="text-red-500 text-xs">图表渲染失败</div>');
       });
     },
-    renderCitations(container, sources) {
-      if(!sources || sources.length === 0) return;
-      container.classList.remove('hidden');
-      container.innerHTML = `<div class="w-full text-xs font-medium text-gray-400 mb-1 flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> 引用来源</div>` +
-      sources.map((s, i) => `
-        <div class="citation-pill" title="${App.utils.escHtml(s.path || s.name)}">
-          <span class="font-semibold text-[10px] bg-gray-200/50 px-1.5 rounded text-gray-500">[${i+1}]</span>
-          <span>${App.utils.escHtml(s.name)}</span>
-        </div>
-      `).join('');
-    },
-    renderToolIndicator(responseDiv, toolMetadata) {
-      const toolIcons = {
-        searchKnowledge: '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>',
-        readFile: '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>',
-        listDirectory: '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>',
-        getKnowledgeBaseStats: '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>'
-      };
-      const toolNames = {
-        searchKnowledge: '搜索知识库',
-        readFile: '读取文件',
-        listDirectory: '浏览目录',
-        getKnowledgeBaseStats: '获取统计'
-      };
-      let html = '<div class="flex items-center gap-1.5 flex-wrap" style="margin-bottom:6px">';
-      for (const t of toolMetadata) {
-        const icon = toolIcons[t.tool] || '';
-        const name = toolNames[t.tool] || t.tool;
-        html += `<span class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full border border-blue-100">${icon} ${name} <span class="text-blue-400">${t.duration}ms</span></span>`;
+
+    // ─── 诊断栏 ───
+    selectMessage(msgId) {
+      document.querySelectorAll('.ai-card.selected').forEach(el => el.classList.remove('selected'));
+      const obj = this.messageMap.get(msgId);
+      if (obj) {
+        const card = document.getElementById(obj.domId);
+        if (card) card.classList.add('selected');
       }
-      html += '</div>';
-      // 移除旧的指示器，避免重复叠加
-      const existing = responseDiv.parentNode.querySelector('.tool-indicator');
-      if (existing) existing.remove();
-      const indicator = document.createElement('div');
-      indicator.className = 'tool-indicator';
-      indicator.innerHTML = html;
-      responseDiv.parentNode.insertBefore(indicator, responseDiv);
+      this.selectedMessageId = msgId;
+      this.renderDiagPanel();
     },
+
+    renderDiagPanel() {
+      const el = document.getElementById('diagContent');
+      if (!el) return;
+      if (!this.selectedMessageId) { this._resetDiagPanel(); return; }
+      const obj = this.messageMap.get(this.selectedMessageId);
+      if (!obj) { this._resetDiagPanel(); return; }
+
+      let html = '';
+
+      // 请求快照
+      html += `<div class="diag-section">
+        <div class="diag-title">请求快照</div>
+        <div class="diag-row"><span class="diag-label">问题</span><span class="diag-value" title="${App.utils.escHtml(obj.query || obj.content)}">${App.utils.escHtml((obj.query || obj.content || '').substring(0, 80))}</span></div>
+        <div class="diag-row"><span class="diag-label">会话</span><span class="diag-value diag-mono" title="${App.utils.escHtml(obj.sessionId || '')}">${(obj.sessionId || '—').substring(0, 12)}...</span></div>
+        <div class="diag-row"><span class="diag-label">模型</span><span class="diag-value">${App.utils.escHtml(obj.modelName || '—')}</span></div>
+        <div class="diag-row"><span class="diag-label">时间</span><span class="diag-value">${obj.createdAt ? new Date(obj.createdAt).toLocaleString('zh-CN') : '—'}</span></div>
+      </div>`;
+
+      // 回答统计
+      const charCount = (obj.content || '').length;
+      html += `<div class="diag-section">
+        <div class="diag-title">回答统计</div>
+        <div class="diag-grid">
+          <div class="diag-stat"><span class="diag-stat-val">${charCount}</span><span class="diag-stat-label">字符数</span></div>
+          <div class="diag-stat"><span class="diag-stat-val">${obj.sources.length}</span><span class="diag-stat-label">引用数</span></div>
+          <div class="diag-stat"><span class="diag-stat-val">${obj.toolMetadata.length}</span><span class="diag-stat-label">工具数</span></div>
+          <div class="diag-stat"><span class="diag-stat-val">${obj.duration != null ? (obj.duration / 1000).toFixed(1) + 's' : '—'}</span><span class="diag-stat-label">耗时</span></div>
+        </div>
+      </div>`;
+
+      // 引用来源详情
+      if (obj.sources.length > 0) {
+        html += `<div class="diag-section"><div class="diag-title">引用来源</div>`;
+        obj.sources.forEach((s, i) => {
+          html += `<div class="diag-cite-item">
+            <span class="diag-cite-idx">[${i + 1}]</span>
+            <div><div class="diag-cite-name">${App.utils.escHtml(s.name)}</div>
+            ${s.path ? '<div class="diag-cite-path">' + App.utils.escHtml(s.path) + '</div>' : ''}</div>
+          </div>`;
+        });
+        html += '</div>';
+      } else if (obj.role === 'assistant') {
+        html += '<div class="diag-section"><div class="diag-title">引用来源</div><div class="diag-empty">无引用数据</div></div>';
+      }
+
+      // 工具调用流水
+      if (obj.toolMetadata.length > 0) {
+        html += `<div class="diag-section"><div class="diag-title">工具调用流水</div>`;
+        obj.toolMetadata.forEach(t => {
+          const icon = this._toolIcons[t.tool] || '⚙️';
+          const name = this._toolNames[t.tool] || t.tool;
+          html += `<div class="diag-tool-row"><span>${icon} ${name}</span><span class="diag-tool-dur">${t.duration}ms</span></div>`;
+        });
+        html += '</div>';
+      } else if (obj.role === 'assistant') {
+        html += '<div class="diag-section"><div class="diag-title">工具调用流水</div><div class="diag-empty">无工具调用</div></div>';
+      }
+
+      // 诊断结论
+      if (obj.role === 'assistant') {
+        const conclusions = [];
+        if (obj.status === 'streaming') {
+          conclusions.push('检索与生成进行中...');
+        } else {
+          if (obj.sources.length >= 3) conclusions.push('本轮包含多个引用来源，证据较充分');
+          else if (obj.sources.length > 0) conclusions.push('本轮引用来源较少，建议核实');
+          else conclusions.push('本轮未提供引用来源，建议谨慎采信');
+          if (obj.toolMetadata.length > 0) conclusions.push(`本轮触发了 ${obj.toolMetadata.length} 次工具调用，回答结合了外部数据`);
+          else conclusions.push('本轮未触发工具调用');
+          if (obj.status === 'error') conclusions.push('本轮回答异常终止');
+        }
+
+        html += `<div class="diag-section"><div class="diag-title">诊断结论</div><ul class="diag-conclusions">`;
+        conclusions.forEach(c => { html += `<li>${c}</li>`; });
+        html += '</ul></div>';
+      }
+
+      // 快速操作（使用 data 属性 + 事件委托，避免 XSS）
+      const qText = App.utils.escHtml(obj.query || obj.content || '');
+      const aText = App.utils.escHtml(obj.content || '');
+      const sId = App.utils.escHtml(obj.sessionId || '');
+      html += `<div class="diag-section"><div class="diag-title">快速操作</div>
+        <div class="diag-actions">
+          <button class="copy-btn" data-copy="${qText.replace(/"/g, '&quot;')}">复制问题</button>
+          <button class="copy-btn" data-copy="${aText.replace(/"/g, '&quot;')}">复制回答</button>
+          <button class="copy-btn" data-copy="${sId}">复制 Session</button>
+        </div>
+      </div>`;
+
+      el.innerHTML = html;
+    },
+
+    toggleDiag() {
+      const panel = document.getElementById('diagPanel');
+      const btn = document.getElementById('diagToggleBtn');
+      if (!panel) return;
+      panel.classList.toggle('hidden');
+      if (btn) btn.style.display = panel.classList.contains('hidden') ? '' : 'none';
+    },
+
+    _initDiagDelegation() {
+      const el = document.getElementById('diagContent');
+      if (!el || el._delegationInit) return;
+      el._delegationInit = true;
+      el.addEventListener('click', (e) => {
+        const btn = e.target.closest('.copy-btn');
+        if (btn) App.utils.copyToClipboard(btn.dataset.copy || '');
+      });
+    },
+
+    toggleSessionCol() {
+      const col = document.getElementById('sessCol');
+      const expandBtn = document.getElementById('sessExpandBtn');
+      if (!col) return;
+      col.classList.toggle('collapsed');
+      const collapsed = col.classList.contains('collapsed');
+      localStorage.setItem('sessColCollapsed', collapsed ? '1' : '0');
+      if (expandBtn) {
+        expandBtn.classList.toggle('hidden', !collapsed);
+        if (collapsed) this._positionExpandBtn();
+      }
+      const icon = document.getElementById('sessToggleIcon');
+      if (icon) icon.style.transform = collapsed ? 'rotate(180deg)' : '';
+    },
+
+    _restoreSessionCol() {
+      const col = document.getElementById('sessCol');
+      const expandBtn = document.getElementById('sessExpandBtn');
+      if (!col) return;
+      if (localStorage.getItem('sessColCollapsed') === '1') {
+        col.classList.add('collapsed');
+        if (expandBtn) {
+          expandBtn.classList.remove('hidden');
+          setTimeout(() => this._positionExpandBtn(), 320);
+        }
+        const icon = document.getElementById('sessToggleIcon');
+        if (icon) icon.style.transform = 'rotate(180deg)';
+      }
+    },
+
+    _positionExpandBtn() {
+      const expandBtn = document.getElementById('sessExpandBtn');
+      const sidebar = document.getElementById('sidebar');
+      if (!expandBtn || !sidebar || sidebar.offsetWidth === 0) return;
+      const sbRect = sidebar.getBoundingClientRect();
+      expandBtn.style.left = sbRect.right + 'px';
+      expandBtn.style.top = (sbRect.top + sbRect.height / 2 - 22) + 'px';
+    },
+
+    // ─── 反馈 ───
     async feedback(btn, rating) {
       const bar = btn.closest('.feedback-bar');
       if (bar.querySelector('.fb-done')) return;
       const question = bar.dataset.query || '';
       const answer = bar.dataset.answer || '';
       try {
-        const saveResp = await fetch('/api/chat/save', {
+        const saveResp = await App.utils.fetchWithRetry('/api/chat/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question, answer, modelName: document.getElementById('modelSelect')?.selectedOptions[0]?.text || '' })
         });
         const saveData = await saveResp.json();
-        await fetch('/api/feedback', {
+        await App.utils.fetchWithRetry('/api/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ qaHistoryId: saveData.id, rating })
         });
-        bar.innerHTML = '<span class="fb-done text-xs text-gray-400">' + (rating > 0 ? '感谢反馈 👍' : '感谢反馈 👎') + '</span>';
+        bar.innerHTML = `<span class="fb-done text-[11px] text-gray-400">${rating > 0 ? '感谢 👍' : '感谢 👎'}</span>`;
       } catch (e) {
         App.utils.toast('反馈提交失败', 'error');
       }
     },
-    clear() {
-      App.state.currentSessionId = null;
-      document.getElementById('chatContainer').innerHTML = `<div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in"><div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10"><svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div><h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2><p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p></div>`;
-      this.loadSessions();
-      App.utils.toast('对话已清空', 'info', 2000);
-    }
+
+    // ─── 状态条 ───
+    async loadStatusBar() {
+      // RAG 配置
+      try {
+        const resp = await App.utils.fetchWithRetry('/api/configs');
+        const configs = await resp.json();
+        const getVal = (key) => configs.find(c => c.key === key)?.value;
+        this._renderStatusBadge('statusBM25', 'BM25', getVal('enable_bm25') === 'true');
+        this._renderStatusBadge('statusRerank', 'RERANK', getVal('enable_reranking') === 'true');
+        this._renderStatusBadge('statusQR', 'QR', getVal('enable_query_rewrite') === 'true');
+      } catch {
+        ['statusBM25', 'statusRerank', 'statusQR'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) { el.textContent = el.textContent.split(':')[0] + ': 未提供'; el.className = 'status-badge off'; }
+        });
+      }
+      // 知识库统计
+      try {
+        const resp = await App.utils.fetchWithRetry('/api/dashboard/stats');
+        const stats = await resp.json();
+        document.getElementById('statusChunks').textContent = stats.totalChunks ?? '—';
+        document.getElementById('statusProjects').textContent = stats.projectCount ?? '—';
+      } catch {
+        document.getElementById('statusChunks').textContent = '—';
+        document.getElementById('statusProjects').textContent = '—';
+      }
+      // Session ID
+      const sessEl = document.getElementById('statusSession');
+      if (sessEl) sessEl.textContent = App.state.currentSessionId ? App.state.currentSessionId.substring(0, 12) + '...' : '—';
+    },
+
+    _renderStatusBadge(id, label, on) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = label + ': ' + (on ? 'ON' : 'OFF');
+      el.className = 'status-badge ' + (on ? 'on' : 'off');
+    },
+
+    _updateStatusSession() {
+      const el = document.getElementById('statusSession');
+      if (el) el.textContent = App.state.currentSessionId ? App.state.currentSessionId.substring(0, 12) + '...' : '—';
+    },
   },
 
   // ==================== 仪表盘功能 ====================
@@ -1947,11 +2290,28 @@ const App = {
     if (sidebar) {
       const isExpanded = localStorage.getItem('sidebarExpanded') === 'true';
       if (isExpanded) sidebar.classList.add('expanded');
-      App._syncSessionListVisibility();
     }
 
     // 预加载项目列表
     App.ingestion.loadProjects();
+
+    // 初始化诊断栏事件委托
+    App.chat._initDiagDelegation();
+
+    // 恢复会话栏折叠状态
+    App.chat._restoreSessionCol();
+
+    // 加载聊天页状态条
+    App.chat.loadStatusBar();
+    App.chat._updateStatusSession();
+
+    // 窗口 resize 时重新定位展开按钮
+    window.addEventListener('resize', () => {
+      const sessCol = document.getElementById('sessCol');
+      if (sessCol && sessCol.classList.contains('collapsed')) {
+        App.chat._positionExpandBtn();
+      }
+    });
   },
 
   toggleSidebar() {
@@ -1959,18 +2319,10 @@ const App = {
     if (!sidebar) return;
     sidebar.classList.toggle('expanded');
     localStorage.setItem('sidebarExpanded', sidebar.classList.contains('expanded'));
-    this._syncSessionListVisibility();
-  },
-  _syncSessionListVisibility() {
-    const sidebar = document.getElementById('sidebar');
-    const wrap = document.getElementById('sessionListWrap');
-    if (!sidebar || !wrap) return;
-    const expanded = sidebar.classList.contains('expanded');
-    if (expanded) {
-      wrap.classList.remove('hidden');
-      App.chat.loadSessions();
-    } else {
-      wrap.classList.add('hidden');
+    // sidebar 过渡 300ms，等完成后重新定位展开按钮
+    const sessCol = document.getElementById('sessCol');
+    if (sessCol && sessCol.classList.contains('collapsed')) {
+      setTimeout(() => App.chat._positionExpandBtn(), 320);
     }
   },
 };

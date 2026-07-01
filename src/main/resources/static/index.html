@@ -47,70 +47,106 @@
       <span class="sidebar-label ml-3 text-sm whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">文档入库</span>
     </button>
     <button onclick="App.switchTab('evaluation')" class="tab-btn flex items-center px-3 py-2.5 mx-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors" title="评估">
-      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+      <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
       <span class="sidebar-label ml-3 text-sm whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">评估</span>
     </button>
     <button onclick="App.switchTab('settings')" class="tab-btn flex items-center px-3 py-2.5 mx-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-colors" title="设置">
       <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
       <span class="sidebar-label ml-3 text-sm whitespace-nowrap overflow-hidden opacity-0 w-0 transition-all duration-300">设置</span>
     </button>
-    <!-- 会话列表（仅展开时可见） -->
-    <div id="sessionListWrap" class="mt-2 px-2 hidden overflow-hidden">
-      <div class="flex items-center justify-between px-1 mb-1">
-        <span class="sidebar-label text-[10px] font-semibold text-gray-400 uppercase tracking-wider opacity-0 w-0 transition-all duration-300">历史会话</span>
-        <button onclick="App.chat.newChat()" class="sidebar-label w-5 h-5 rounded hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-primary opacity-0 w-0 transition-all duration-300" title="新建会话">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-        </button>
-      </div>
-      <div id="sessionList" class="space-y-0.5 max-h-[50vh] overflow-y-auto custom-scrollbar"></div>
-    </div>
-    <div class="mt-auto pb-4 flex flex-col items-center gap-2">
-      <button onclick="App.toggleSidebar()" class="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors" title="展开/收起">
+
+    <div class="mt-auto pb-4 flex flex-col items-center gap-1">
+      <button onclick="App.toggleSidebar()" class="sidebar-toggle-btn" title="展开/收起侧栏">
         <svg id="sidebarToggleIcon" class="w-4 h-4 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
       </button>
-      <div class="w-9 h-9 rounded-full bg-gray-200 border-2 border-white shadow-sm flex items-center justify-center text-sm font-medium text-gray-600">我</div>
     </div>
   </aside>
 
   <!-- ==================== MAIN CONTENT ==================== -->
   <main class="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
 
-    <!-- ========== CHAT PAGE ========== -->
-    <div id="tab-chat" class="flex-1 flex flex-col h-full relative">
-      <header class="h-14 bg-white/80 backdrop-blur-md border-b border-gray-100 flex items-center px-6 flex-shrink-0 z-10 sticky top-0">
-        <h1 class="text-base font-semibold text-gray-800 tracking-wide">智能对话</h1>
-        <div class="ml-auto flex items-center gap-3">
-          <select id="modelSelect" onchange="App.chat.onModelChange()" class="text-sm border-none bg-gray-50 text-gray-600 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-primary/20 cursor-pointer transition-colors hover:bg-gray-100">
+    <!-- ========== CHAT PAGE (实验台布局) ========== -->
+    <div id="tab-chat" class="flex-1 flex flex-col h-full overflow-hidden">
+
+      <!-- 顶部运行状态条 -->
+      <div id="chatStatusBar" class="flex items-center gap-2 px-4 py-1.5 bg-gray-50 text-gray-600 text-[11px] border-b border-gray-200 flex-shrink-0 overflow-x-auto font-mono whitespace-nowrap select-none">
+        <span class="status-item"><span class="text-gray-400">LLM</span> <span id="statusLlm" class="text-gray-700 font-medium">加载中...</span></span>
+        <span class="status-sep">│</span>
+        <span class="status-item"><span class="text-gray-400">SESSION</span> <span id="statusSession" class="text-gray-500">—</span></span>
+        <span class="status-sep">│</span>
+        <span class="status-item"><span class="text-gray-400">CHUNKS</span> <span id="statusChunks" class="text-gray-700">—</span></span>
+        <span class="status-sep">│</span>
+        <span class="status-item"><span class="text-gray-400">PROJECTS</span> <span id="statusProjects" class="text-gray-700">—</span></span>
+        <span class="status-sep">│</span>
+        <span id="statusBM25" class="status-badge off">BM25: --</span>
+        <span id="statusRerank" class="status-badge off">RERANK: --</span>
+        <span id="statusQR" class="status-badge off">QR: --</span>
+        <span class="ml-auto flex items-center gap-2 flex-shrink-0">
+          <select id="modelSelect" onchange="App.chat.onModelChange()" class="bg-white text-gray-600 border border-gray-300 rounded px-2 py-0.5 text-[11px] focus:ring-1 focus:ring-primary/40 cursor-pointer">
             <option value="">加载模型中...</option>
           </select>
-          <button onclick="App.chat.clear()" class="text-sm text-gray-500 hover:text-red-500 px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1">
-             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-             清空对话
-          </button>
-        </div>
-      </header>
+          <button onclick="App.chat.newChat()" class="status-btn" title="新会话">+ 新会话</button>
+          <button onclick="App.chat.clear()" class="status-btn status-btn-danger" title="清空对话">清空</button>
+          <button id="diagToggleBtn" onclick="App.chat.toggleDiag()" class="status-btn" title="诊断栏" style="display:none">诊断</button>
+        </span>
+      </div>
 
-      <div id="chatMessages" class="flex-1 overflow-y-auto px-4 pt-6 pb-40 scroll-smooth custom-scrollbar">
-        <div id="chatContainer" class="max-w-4xl mx-auto space-y-8">
-          <div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in">
-            <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10">
-              <svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+      <!-- 三栏主体 -->
+      <div class="flex-1 flex overflow-hidden relative">
+
+        <!-- 左侧会话栏 -->
+        <div id="sessCol" class="w-56 bg-gray-50 border-r border-gray-200 flex flex-col flex-shrink-0 transition-all duration-300">
+          <div class="p-2.5 border-b border-gray-200 flex items-center justify-between">
+            <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">历史会话</span>
+            <button onclick="App.chat.toggleSessionCol()" class="text-gray-400 hover:text-gray-600 p-0.5 rounded hover:bg-gray-200 transition-colors" title="折叠会话栏">
+              <svg id="sessToggleIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+            </button>
+          </div>
+          <div id="sessionList" class="flex-1 overflow-y-auto p-2 space-y-0.5 custom-scrollbar"></div>
+        </div>
+
+        <!-- 会话栏展开按钮（折叠后显示） -->
+        <button id="sessExpandBtn" onclick="App.chat.toggleSessionCol()" class="sess-expand-btn hidden" title="展开会话栏">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+        </button>
+
+        <!-- 中央对话区 -->
+        <div id="chatScrollArea" class="flex-1 overflow-y-auto scroll-smooth custom-scrollbar">
+          <div id="chatContainer" class="max-w-4xl mx-auto space-y-6 p-6">
+            <div id="chatWelcome" class="flex flex-col items-center justify-center py-32 text-center animate-fade-in">
+              <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center mb-6 shadow-sm border border-primary/10">
+                <svg class="w-7 h-7 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+              </div>
+              <h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2>
+              <p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p>
             </div>
-            <h2 class="text-2xl font-semibold text-gray-800 mb-3 tracking-tight">有什么可以帮你的？</h2>
-            <p class="text-gray-500 text-sm max-w-md leading-relaxed">基于本地知识库的智能问答引擎，支持引用溯源、Markdown 与 Mermaid 可视化渲染。</p>
+          </div>
+        </div>
+
+        <!-- 右侧诊断栏 -->
+        <div id="diagPanel" class="w-80 bg-gray-50 border-l border-gray-200 flex flex-col flex-shrink-0 overflow-hidden">
+          <div class="p-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+            <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">诊断</span>
+            <button onclick="App.chat.toggleDiag()" class="text-gray-400 hover:text-gray-600 p-0.5" title="收起诊断栏">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+          <div id="diagContent" class="flex-1 overflow-y-auto p-3 custom-scrollbar">
+            <div class="text-xs text-gray-400 text-center py-8">选中一条 AI 回复查看详情</div>
           </div>
         </div>
       </div>
 
-      <div class="absolute bottom-0 left-0 right-0 pt-10 pb-6 px-4 bg-gradient-to-t from-background via-background to-transparent pointer-events-none z-10">
-        <div class="max-w-4xl mx-auto pointer-events-auto">
-          <div class="relative bg-white border border-gray-200 shadow-lg shadow-gray-200/50 rounded-2xl focus-within:ring-4 focus-within:ring-primary/10 focus-within:border-primary/40 transition-all duration-300">
-            <textarea id="chatInput" rows="1" placeholder="输入你的问题... (Shift + Enter 换行)" class="w-full bg-transparent rounded-2xl px-5 py-4 pr-16 resize-none focus:outline-none text-sm leading-relaxed max-h-[200px] overflow-y-auto custom-scrollbar" onkeydown="App.chat.onKeydown(event)"></textarea>
-            <button id="sendBtn" onclick="App.chat.send()" class="absolute right-3 bottom-3 h-8 w-8 bg-primary hover:bg-primary-hover text-white rounded-xl transition-all duration-200 flex items-center justify-center disabled:opacity-40 disabled:bg-gray-300 disabled:cursor-not-allowed">
-              <svg class="w-4 h-4 translate-x-[1px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+      <!-- 底部输入区 -->
+      <div class="flex-shrink-0 border-t border-gray-200 bg-white px-4 py-3">
+        <div class="max-w-4xl mx-auto">
+          <div class="relative bg-white border border-gray-200 shadow-sm rounded-xl focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/40 transition-all duration-200">
+            <textarea id="chatInput" rows="1" placeholder="输入你的问题... (Shift + Enter 换行)" class="w-full bg-transparent rounded-xl px-4 py-3 pr-12 resize-none focus:outline-none text-sm leading-relaxed max-h-[200px] overflow-y-auto custom-scrollbar" onkeydown="App.chat.onKeydown(event)"></textarea>
+            <button id="sendBtn" onclick="App.chat.send()" class="absolute right-2.5 bottom-2.5 h-7 w-7 bg-primary hover:bg-primary-hover text-white rounded-lg transition-all duration-200 flex items-center justify-center disabled:opacity-40 disabled:bg-gray-300 disabled:cursor-not-allowed">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/></svg>
             </button>
           </div>
-          <p class="text-[11px] text-gray-400 mt-3 text-center tracking-wide">AI 生成的内容可能不准确，请核实重要信息及引用来源。</p>
+          <p class="text-[10px] text-gray-400 mt-1.5 text-center">AI 生成的内容可能不准确，请核实重要信息及引用来源。</p>
         </div>
       </div>
     </div>
