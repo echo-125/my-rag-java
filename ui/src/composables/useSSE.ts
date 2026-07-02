@@ -30,6 +30,7 @@ export function useSSE() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
           signal: abortController!.signal,
+          openWhenClosed: false,
           onmessage(ev) {
             if (ev.data === '[DONE]') {
               callbacks.onDone?.()
@@ -45,14 +46,17 @@ export function useSSE() {
             }
           },
           onerror(err) {
-            if (err.name === 'AbortError') return
+            if (err.name === 'AbortError') return 0
             if (retryCount < maxRetries) {
               const delay = BASE_DELAY * Math.pow(2, retryCount)
               retryCount++
               setTimeout(() => attempt(), delay)
+              return 0 // 阻止库内置重试，由我们的逻辑控制
             } else {
               callbacks.onError?.(err)
+              abortController?.abort()
             }
+            return 0
           },
           onclose() {
             callbacks.onDone?.()
