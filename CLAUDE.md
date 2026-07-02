@@ -20,27 +20,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - JavaParser 3.28.2（Java AST 切分）
 - Apache Tika 3.3.1（PDF/Word 文档解析，自带编码探测）
 - Apache POI 5.2.5（Excel/PPT 结构化解析）
-- 前端：HTML/JS + Tailwind CSS + ECharts + Mermaid.js + marked.js（无构建工具，纯静态引入）
+- 前端：Vue 3 + Vite + TypeScript + Nuxt UI v4 + Pinia + Shiki + Mermaid + ApexCharts
 
 ## 构建与运行
 
 ```bash
-# 构建
+# 后端构建
 mvn clean package -DskipTests
 
-# 运行
+# 后端运行
 mvn spring-boot:run
 
-# 运行全部测试
+# 后端测试
 mvn test
-
-# 运行单个测试类
 mvn test -Dtest=ChatSessionControllerTest
 
-# 运行 Playwright 前端测试（需服务启动）
+# 前端开发（独立终端）
+cd ui && npm install && npm run dev
+
+# 前端构建
+cd ui && npm run build
+
+# Playwright 前端测试（需服务启动）
 npx playwright test tests/frontend.spec.ts
 
-# 运行 Playwright 集成测试（需服务启动 + 测试数据已入库）
+# Playwright 集成测试（需服务启动 + 测试数据已入库）
 npx playwright test tests/integration-api.spec.ts
 ```
 

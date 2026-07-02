@@ -9,26 +9,27 @@
 ## 构建与运行命令
 
 ```bash
-# 全部测试
+# 后端测试
 mvn test
-
-# 单个测试
 mvn test -Dtest=类名#方法名
 
-# 构建（跳过测试）
+# 后端构建（跳过测试）
 mvn clean package -DskipTests
 
-# 运行
+# 后端运行
 mvn spring-boot:run
+
+# 前端开发（独立终端）
+cd ui && npm install && npm run dev
+
+# 前端构建
+cd ui && npm run build
 
 # Playwright 前端测试（需服务启动）
 npx playwright test tests/frontend.spec.ts
 
 # Playwright 集成测试（需服务启动 + 数据已入库）
 npx playwright test tests/integration-api.spec.ts
-
-# 准备测试数据
-node tests/setup-test-data.js
 ```
 
 **环境路径**（非标准）：本地 Maven 仓库 `D:\develop\MAVEN`（settings.xml 配置），JDK `C:\Program Files\Java\jdk-21`。
@@ -125,11 +126,15 @@ System.setProperty("langchain4j.http.clientBuilderFactory",
 
 ## 前端约束
 
-- **无构建工具**：纯静态 HTML/JS，第三方库放入 `static/lib/`
-- Tailwind CSS 通过 CDN 加载（开发版本 ~4MB），离线不可用
-- `app.js` 是 ~1800 行单体文件，所有功能在 `App` 命名空间下
-- 路由无 URL hash 同步（纯 CSS `hidden` 类切换）
-- 5 个 Tab 页：对话 / 仪表盘 / 文档入库 / 评估 / 设置
+- **Vue 3 + Vite**：`ui/` 目录，`npm run dev` 启动开发服务器（端口 3000，代理 `/api` 到后端 8080）
+- **UI 组件库**：Nuxt UI v4（`@nuxt/ui` 独立 Vue 模式，Vite 插件 `@nuxt/ui/vite`）
+- **暗色主题**：默认深色，主色 `#10a37f`，通过 `@vueuse/core` 的 `useColorMode` 管理
+- **状态管理**：Pinia，按领域拆分为 app / chat / ingestion / evaluation / settings 五个 store
+- **路由**：Vue Router 4 Hash 模式，5 个 Tab：对话 / 仪表盘 / 文档入库 / 评估 / 设置
+- **流式对话**：`@microsoft/fetch-event-source` + `openWhenClosed: false`，`reactive` 数组存储消息
+- **Markdown 渲染**：Shiki（代码高亮）+ markdown-it + Mermaid
+- **类型安全**：TypeScript strict 模式，所有 `.ts` 和 `.vue` 文件必须显式 `import { ref } from 'vue'`（Nuxt UI auto-import 不注入 Vue 原生 API）
+- **构建产物**：`npm run build`（仅 `vite build`，无 vue-tsc 类型检查）
 
 ---
 
