@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 
 export function usePolling(

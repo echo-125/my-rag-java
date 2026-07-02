@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 import { createHighlighter } from 'shiki'
 import markdownit from 'markdown-it'
 import { fromHighlighter } from '@shikijs/markdown-it'
