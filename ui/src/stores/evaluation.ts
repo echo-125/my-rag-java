@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { TestSet, TestCase, EvalBatch, EvalResult } from '@/types/evaluation'
 import { api } from '@/utils/api'

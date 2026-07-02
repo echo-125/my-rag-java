@@ -1,3 +1,4 @@
+import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import type { ProjectConfig, ScanResult, IngestionProgress } from '@/types/ingestion'
 import { api } from '@/utils/api'

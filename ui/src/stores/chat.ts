@@ -1,3 +1,4 @@
+import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { ChatSession } from '@/types/chat'
 import { api } from '@/utils/api'
