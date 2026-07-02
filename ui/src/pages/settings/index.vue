@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { toast } from 'vue-sonner'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -174,7 +175,7 @@ onMounted(() => {
           </div>
           <p class="text-xs text-muted mb-3">{{ item.description }}</p>
           <!-- 根据 type 动态渲染 -->
-          <UToggle
+          <USwitch
             v-if="item.type === 'boolean'"
             :model-value="item.value === 'true'"
             @update:model-value="item.value = $event ? 'true' : 'false'"
@@ -193,7 +194,7 @@ onMounted(() => {
           <UTextarea
             v-else-if="item.type === 'textarea'"
             v-model="item.value"
-            rows="3"
+            :rows="3"
           />
           <USelect
             v-else-if="item.type === 'select'"
@@ -308,7 +309,7 @@ onMounted(() => {
               </UFormField>
             </div>
             <UFormField label="Agent 工具调用">
-              <UToggle v-model="formData.enableToolCalling" />
+              <USwitch v-model="formData.enableToolCalling" />
             </UFormField>
           </template>
           <UFormField v-if="modalType === 'embedding'" label="维度">

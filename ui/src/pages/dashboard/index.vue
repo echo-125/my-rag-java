@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
 import { api } from '@/utils/api'
 import { formatNumber, formatRelative } from '@/utils/format'
 import { useMermaid } from '@/composables/useMermaid'
@@ -112,7 +113,7 @@ onMounted(async () => {
       <div class="rounded-xl border border-default bg-elevated p-4">
         <h3 class="text-sm font-medium text-default mb-3">代码语言分布</h3>
         <div v-if="languages.length > 0" class="h-64">
-          <VueApexCharts
+          <apexchart
             type="bar"
             height="100%"
             :options="chartOptions"

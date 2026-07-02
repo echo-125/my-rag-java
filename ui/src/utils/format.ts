@@ -23,7 +23,8 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`
 }
 
-export function formatNumber(n: number): string {
+export function formatNumber(n: number | undefined | null): string {
+  if (n == null) return '0'
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
   return n.toString()
