@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useAutoResizeTextarea } from '@/composables/useAutoResizeTextarea'
 
 const props = defineProps<{

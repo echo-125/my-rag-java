@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, nextTick, watch } from 'vue'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { useMermaid } from '@/composables/useMermaid'
 

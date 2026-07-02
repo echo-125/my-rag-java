@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, computed } from 'vue'
 import type { StreamMessage } from '@/composables/useChatStream'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { formatDuration } from '@/utils/format'
