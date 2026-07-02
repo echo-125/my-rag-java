@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useAppStore } from '@/stores/app'
+import { useSettingsStore } from '@/stores/settings'
 import { useChatStream, type StreamMessage } from '@/composables/useChatStream'
 import { useThrottleFn } from '@vueuse/core'
 import { toast } from 'vue-sonner'
@@ -15,13 +17,14 @@ import { api } from '@/utils/api'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
-const chatStream = useChatStream()
+const settingsStore = useSettingsStore()
+const { messages, input, isLoading, error: chatError, currentSessionId, send, stop, clearMessages } = useChatStream()
 
 const messageListRef = ref<HTMLElement | null>(null)
-const selectedModel = ref('default')
+const selectedModel = ref('')
 const selectedDiagMessage = ref<StreamMessage | null>(null)
 
-const showWelcome = computed(() => chatStream.messages.value.length === 0)
+const showWelcome = computed(() => messages.length === 0)
 
 const throttledScroll = useThrottleFn(() => {
   if (messageListRef.value) {
@@ -29,20 +32,18 @@ const throttledScroll = useThrottleFn(() => {
   }
 }, 100)
 
-// 自动滚动到底部
 watch(
-  () => chatStream.messages.value.length,
+  () => messages.length,
   () => nextTick(throttledScroll),
 )
 
-// 流式内容更新时滚动
 watch(
-  () => chatStream.messages.value.at(-1)?.content,
+  () => messages.at(-1)?.content,
   () => nextTick(throttledScroll),
 )
 
 async function handleSend(query: string) {
-  await chatStream.send(query, selectedModel.value)
+  await send(query, selectedModel.value)
 }
 
 function handleQuickAction(query: string) {
@@ -60,46 +61,42 @@ async function handleFeedback(messageId: string, positive: boolean) {
       method: 'POST',
       body: { messageId, positive },
     })
-    toast.success(positive ? '感谢反馈 👍' : '已收到，我们会改进')
+    toast.success(positive ? '感谢反馈' : '已收到，我们会改进')
   } catch {
     toast.error('反馈提交失败')
   }
 }
 
 function handleNewChat() {
-  chatStream.clearMessages()
+  clearMessages()
   chatStore.setActiveSession(null)
 }
 
-onMounted(() => {
+onMounted(async () => {
   chatStore.fetchSessions()
+  await settingsStore.fetchLlmConfigs()
+  const active = settingsStore.llmConfigs.find(c => c.isActive)
+  if (active) selectedModel.value = active.id
 })
 </script>
 
 <template>
   <div class="flex flex-1 overflow-hidden">
-    <!-- 左侧会话栏 -->
     <aside class="w-56 shrink-0 border-r border-default bg-default overflow-hidden hidden md:flex">
       <SessionPanel @new-chat="handleNewChat" />
     </aside>
 
-    <!-- 中央对话区 -->
     <div class="flex flex-1 flex-col overflow-hidden">
-      <!-- 状态条 -->
       <ChatStatusBar
         :model-name="selectedModel"
         :session-id="chatStore.activeSessionId ?? undefined"
       />
 
-      <!-- 消息列表 -->
-      <div
-        ref="messageListRef"
-        class="flex-1 overflow-y-auto"
-      >
+      <div ref="messageListRef" class="flex-1 overflow-y-auto">
         <WelcomePanel v-if="showWelcome" @quick-action="handleQuickAction" />
         <div v-else class="py-4 space-y-1">
           <div
-            v-for="msg in chatStream.messages"
+            v-for="msg in messages"
             :key="msg.id"
             class="cursor-pointer hover:bg-elevated/30 transition-colors rounded-lg"
             @click="handleMessageClick(msg)"
@@ -114,15 +111,13 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- 输入区 -->
       <InputArea
-        :loading="chatStream.isLoading"
+        :loading="isLoading"
         @send="handleSend"
-        @stop="chatStream.stop()"
+        @stop="stop"
       />
     </div>
 
-    <!-- 右侧诊断面板 -->
     <DiagPanel :message="selectedDiagMessage" />
   </div>
 </template>

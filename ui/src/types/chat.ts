@@ -31,11 +31,14 @@ export interface ToolCall {
   durationMs: number
 }
 
-export interface ChatStreamEvent {
-  type: 'text' | 'sources' | 'toolMetadata' | 'done' | 'error'
-  content?: string
+/** 后端 SSE 实际协议：单事件返回 { text, sources, sessionId } 或 { type: 'done'/'error' } */
+export interface ChatStreamData {
+  text?: string
   sources?: Source[]
   toolMetadata?: ToolCall[]
+  sessionId?: string
+  type?: 'done' | 'error'
+  content?: string
 }
 
 export interface DiagnosticData {
